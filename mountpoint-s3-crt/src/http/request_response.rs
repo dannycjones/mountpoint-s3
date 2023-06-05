@@ -50,7 +50,6 @@ impl<N: AsRef<OsStr>, V: AsRef<OsStr>> Header<N, V> {
 }
 
 /// A block of HTTP headers that provides a nice API for getting/setting header names and values
-#[derive(Debug)]
 pub struct Headers {
     inner: NonNull<aws_http_headers>,
 }
@@ -238,6 +237,14 @@ impl<'a> Iterator for HeadersIterator<'a> {
         } else {
             None
         }
+    }
+}
+
+impl std::fmt::Debug for Headers {
+    fn fmt(&self, fmt: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(fmt, "Headers(")?;
+        fmt.debug_list().entries(self.iter()).finish()?;
+        write!(fmt, ")")
     }
 }
 
