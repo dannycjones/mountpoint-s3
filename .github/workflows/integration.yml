@@ -1,4 +1,4 @@
-name: Integration tests
+name: Integration Tests
 
 # We use environments to require approval to run integration tests on PRs, but not on pushes to
 # `main` (which have been approved already since PRs are required for `main`).
@@ -15,12 +15,14 @@ env:
   RUST_BACKTRACE: 1
   CARGO_TERM_COLOR: always
   CARGO_INCREMENTAL: 0
-  S3_BUCKET_NAME: ${{ vars.S3_BUCKET_NAME }}
   S3_BUCKET_TEST_PREFIX: ${{ vars.S3_BUCKET_TEST_PREFIX || 'github-actions-tmp/' }}run-${{ github.run_id }}/attempt-${{ github.run_attempt }}/
-  # A bucket our IAM role has no access to, but is in the right region, for permissions tests
-  S3_FORBIDDEN_BUCKET_NAME: ${{ vars.S3_FORBIDDEN_BUCKET_NAME }}
-  S3_REGION: ${{ vars.S3_REGION }}
   RUST_FEATURES: fuse_tests,s3_tests,checksum
+  # Defaults if not overridden by jobs.
+  S3_BUCKET_NAME: ${{ fromJSON(vars.S3_TARGETS).testTargets[0].bucket }}
+  # A bucket our IAM role has no access to, but is in the right region, for permissions tests
+  S3_FORBIDDEN_BUCKET_NAME: ${{ fromJSON(vars.S3_TARGETS).testTargets[0].forbiddenBucket }}
+  S3_REGION: ${{ fromJSON(vars.S3_TARGETS).testTargets[0].region }}
+  IAM_ROLE: ${{ fromJSON(vars.S3_TARGETS).testTargets[0].role }}
 
 permissions:
   id-token: write
@@ -28,21 +30,37 @@ permissions:
 
 jobs:
   test:
-    name: Tests
-    runs-on: ubuntu-22.04
+    name: ${{ matrix.testTarget.region}}; FUSE ${{matrix.fuseVersion}}; ${{matrix.runner.name}}
+    runs-on: ${{ matrix.runner.tags }}
 
     environment: ${{ inputs.environment }}
 
     strategy:
       matrix:
-        fuse: [fuse, fuse3]
+        runner:
+        - name: Ubuntu x86
+          tags: [ubuntu-22.04] # GitHub-hosted
+        - name: AL2 ARMv8
+          tags: [self-hosted, linux, arm64]
+        fuseVersion: [2, 3]
+        testTarget: ${{ fromJSON(vars.S3_TARGETS).testTargets }}
+        exclude:
+        - fuseVersion: 3
+          runner:
+          - name: AL2 ARMv8
+    env:
+      S3_BUCKET_NAME: ${{ matrix.testTarget.bucket }}
+      # A bucket our IAM role has no access to, but is in the right region, for permissions tests
+      S3_FORBIDDEN_BUCKET_NAME: ${{ matrix.testTarget.forbiddenBucket }}
+      S3_REGION: ${{ matrix.testTarget.region }}
+      IAM_ROLE: ${{ matrix.testTarget.role }}
 
     steps:
     - name: Configure AWS credentials
       uses: aws-actions/configure-aws-credentials@v2
       with:
-        role-to-assume: ${{ vars.ACTIONS_IAM_ROLE }}
-        aws-region: ${{ vars.S3_REGION }}
+        role-to-assume: ${{ env.IAM_ROLE }}
+        aws-region: ${{ env.S3_REGION }}
     - name: Checkout code
       uses: actions/checkout@v3
       with:
@@ -65,66 +83,12 @@ jobs:
           ~/.cargo/git/db/
           target/
         key: ${{ runner.os }}-${{ github.job }}-integration-${{ matrix.fuse }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-    - name: Install fuse
-      run: sudo apt-get install ${{ matrix.fuse }} lib${{ matrix.fuse }}-dev
-    - name: Configure fuse
-      run: echo 'user_allow_other' | sudo tee -a /etc/fuse.conf
-    - name: Run tests
-      run: cargo test --features $RUST_FEATURES
-    - name: Save Cargo cache
-      uses: actions/cache/save@v3
-      if: inputs.environment != 'PR integration tests'
+    - name: Install and configure FUSE
+      uses: ./.github/actions/configure-fuse
       with:
-        path: |
-          ~/.cargo/bin/
-          ~/.cargo/registry/index/
-          ~/.cargo/registry/cache/
-          ~/.cargo/git/db/
-          target/
-        key: ${{ steps.restore-cargo-cache.outputs.cache-primary-key }}
-
-  arm64-test:
-    name: Tests (arm64)
-    runs-on: [self-hosted, linux, arm64]
-
-    environment: ${{ inputs.environment }}
-
-    steps:
-    - name: Configure AWS credentials
-      uses: aws-actions/configure-aws-credentials@v2
-      with:
-        role-to-assume: ${{ vars.ACTIONS_IAM_ROLE }}
-        aws-region: ${{ vars.S3_REGION }}
-    - name: Checkout code
-      uses: actions/checkout@v3
-      with:
-        ref: ${{ inputs.ref }}
-        submodules: true
-        persist-credentials: false
-    - name: Set up stable Rust
-      uses: actions-rs/toolchain@v1
-      with:
-        toolchain: stable
-        override: true
-    - name: Restore Cargo cache
-      id: restore-cargo-cache
-      uses: actions/cache/restore@v3
-      with:
-        path: |
-          ~/.cargo/bin/
-          ~/.cargo/registry/index/
-          ~/.cargo/registry/cache/
-          ~/.cargo/git/db/
-          target/
-        key: ${{ runner.os }}-${{ github.job }}-integration-cargo-${{ hashFiles('**/Cargo.lock') }}
-    - name: Install dependencies
-      run: |
-        sudo yum update
-        sudo yum install -y cmake3 clang-devel pkgconfig
-    - name: Install fuse
-      run: sudo yum install -y fuse fuse-devel
-    - name: Configure fuse
-      run: echo 'user_allow_other' | sudo tee -a /etc/fuse.conf
+        fuseVersion: ${{ matrix.fuseVersion }}
+    - name: Build tests
+      run: cargo test --features $RUST_FEATURES --no-run
     - name: Run tests
       run: cargo test --features $RUST_FEATURES
     - name: Save Cargo cache
@@ -149,10 +113,10 @@ jobs:
 
     steps:
     - name: Configure AWS credentials
-      uses: aws-actions/configure-aws-credentials@v1
+      uses: aws-actions/configure-aws-credentials@v2
       with:
-        role-to-assume: ${{ vars.ACTIONS_IAM_ROLE }}
-        aws-region: ${{ vars.S3_REGION }}
+        role-to-assume: ${{ env.IAM_ROLE }}
+        aws-region: ${{ env.S3_REGION }}
     - name: Checkout code
       uses: actions/checkout@v3
       with:
@@ -174,12 +138,12 @@ jobs:
           ~/.cargo/git/db/
           target/
         key: ${{ runner.os }}-${{ github.job }}-integration-asan-cargo-${{ hashFiles('**/Cargo.lock') }}
-    - name: Install fuse
-      run: sudo apt-get install fuse3 libfuse3-dev
     - name: Install llvm-dev
       run: sudo apt-get install llvm-dev
-    - name: Configure fuse
-      run: echo 'user_allow_other' | sudo tee -a /etc/fuse.conf
+    - name: Install and configure FUSE
+      uses: ./.github/actions/configure-fuse
+      with:
+        fuseVersion: 3
     - name: Validate ASan is working
       run: make test-asan-working
     - name: Run tests

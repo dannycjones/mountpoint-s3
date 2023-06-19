@@ -1,0 +1,46 @@
+name: 'Install and configure FUSE'
+description: 'Installs FUSE based on the operating system and FUSE version, and configures it to allow other users to use the FS.'
+inputs:
+  fuseVersion:
+    required: true
+    type: number
+runs:
+  using: "composite"
+  steps:
+  - name: Determine OS Release ID
+    shell: bash
+    run: |
+      distro=$(cat /etc/os-release | grep "^ID=" | cut -d '=' -f2 | tr -d '"')
+      echo "OS_RELEASE_ID=${distro}" >> "$GITHUB_ENV"
+  - name: Install FUSE using apt package manager
+    if: ${{ env.OS_RELEASE_ID == 'ubuntu' }}
+    shell: bash
+    run: |
+      fuse_package_name=fuse
+      if [ ${{ inputs.fuseVersion }} == 3 ]; then
+        fuse_package_name=fuse3
+      fi
+      sudo apt-get install $fuse_package_name lib${fuse_package_name}-dev
+      echo "FUSE_INSTALLED=1" >> "$GITHUB_ENV"
+  - name: Install FUSE using yum package manager
+    if: ${{ env.OS_RELEASE_ID == 'amzn' }}
+    shell: bash
+    run: |
+      fuse_package_name=fuse
+      if [ ${{ inputs.fuseVersion }} == 3 ]; then
+        exit 1 # TODO :)
+      fi
+      sudo yum update
+      sudo yum install -y fuse fuse-devel
+      echo "FUSE_INSTALLED=1" >> "$GITHUB_ENV"
+  - name: Check FUSE was installed by this action
+    shell: bash
+    run: |
+      if [[ $FUSE_INSTALLED ]]; then
+        exit 0
+      else
+        exit 1
+      fi
+  - name: Configure fuse
+    shell: bash
+    run: echo 'user_allow_other' | sudo tee -a /etc/fuse.conf

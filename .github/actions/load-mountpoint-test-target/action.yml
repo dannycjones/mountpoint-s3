@@ -1,0 +1,25 @@
+name: 'Load Mountpoint test environment variables'
+inputs:
+  encodedJson:
+    required: true
+    type: string
+  index:
+    required: true
+    type: number
+  
+run:
+  using: "composite"
+  steps:
+  - name: Configure fuse
+    run: echo "S3_BUCKET_NAME=${{  }}" >> "$GITHUB_ENV"
+
+## CANNOT SET NAME BASED ON THIS?
+
+
+
+  # Defaults if not overridden by jobs.
+  S3_BUCKET_NAME: ${{ fromJSON(vars.S3_TARGETS)[0].testTarget.bucket }}
+  # A bucket our IAM role has no access to, but is in the right region, for permissions tests
+  S3_FORBIDDEN_BUCKET_NAME: ${{ fromJSON(vars.S3_TARGETS)[0].testTarget.forbiddenBucket }}
+  S3_REGION: ${{ fromJSON(vars.S3_TARGETS)[0].testTarget.region }}
+  IAM_ROLE: ${{ fromJSON(vars.S3_TARGETS)[0].testTarget.role }}
