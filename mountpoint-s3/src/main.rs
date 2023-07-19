@@ -20,6 +20,8 @@ use nix::sys::signal::Signal;
 use nix::unistd::ForkResult;
 use regex::Regex;
 
+use tracing::info;
+
 mod build_info;
 
 mod logging {
@@ -320,6 +322,8 @@ fn main() -> anyhow::Result<()> {
     if args.foreground {
         logging::init_logging(args.foreground, args.log_directory.as_deref())
             .context("failed to initialize logging")?;
+
+        info!("Hello World");
 
         let _metrics = MetricsSink::init();
 
