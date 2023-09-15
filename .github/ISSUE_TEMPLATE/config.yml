@@ -1,0 +1,7 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Contact Link 1
+    url: https://github.com/dannycjones/mountpoint-s3/actions
+    about: I can tell you about this contact link.
+  - name: Contact Link 2
+    url: Hello World
