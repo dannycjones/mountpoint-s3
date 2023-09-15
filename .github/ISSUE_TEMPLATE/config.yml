@@ -5,3 +5,4 @@ contact_links:
     about: I can tell you about this contact link.
   - name: Contact Link 2
     url: Hello World
+    about: This is the second contact link.
