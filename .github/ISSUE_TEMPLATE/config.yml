@@ -4,5 +4,5 @@ contact_links:
     url: https://github.com/dannycjones/mountpoint-s3/actions
     about: I can tell you about this contact link.
   - name: Contact Link 2
-    url: Hello World
+    url: https://aws.amazon.com/
     about: This is the second contact link.
