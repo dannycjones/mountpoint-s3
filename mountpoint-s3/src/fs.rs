@@ -651,7 +651,16 @@ where
             },
             Err(PrefetchReadError::GetRequestFailed(ObjectClientError::ServiceError(
                 GetObjectError::PreconditionFailed,
-            ))) => reply.error(err!(libc::ESTALE, "object was mutated remotely")),
+            ))) => {
+                trace!(ino, "object replaced remotely, deleting old inode");
+                self.superblock.inode_disappeared_remotely(&handle.inode);
+                reply.error(err!(libc::ESTALE, "object was mutated remotely"))
+            }
+            Err(PrefetchReadError::GetRequestFailed(ObjectClientError::ServiceError(GetObjectError::NoSuchKey))) => {
+                trace!(ino, "object deleted remotely, deleting old inode");
+                self.superblock.inode_disappeared_remotely(&handle.inode);
+                reply.error(err!(libc::ESTALE, "object was deleted remotely"))
+            }
             Err(PrefetchReadError::Integrity(e)) => reply.error(err!(libc::EIO, source:e, "integrity error")),
             Err(e @ PrefetchReadError::GetRequestFailed(_))
             | Err(e @ PrefetchReadError::GetRequestTerminatedUnexpectedly)

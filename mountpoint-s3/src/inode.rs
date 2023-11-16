@@ -118,6 +118,54 @@ impl Superblock {
         Self { inner: Arc::new(inner) }
     }
 
+    /// Notify superblock that the [Inode] has been replaced or removed remotely.
+    ///
+    /// This removes the given [Inode] from its parent to avoid serving it in future cache lookups.
+    pub fn inode_disappeared_remotely(&self, inode: &Inode) {
+        let parent = {
+            let inodes = self.inner.inodes.read().unwrap();
+            match inodes.get(&inode.parent()).cloned() {
+                Some(parent) => parent,
+                None => {
+                    warn!(parent_ino = inode.parent(), child = ?inode, "parent didn't exist when attempting to remove child");
+                    return;
+                }
+            }
+        };
+        let mut parent_state = match parent.get_mut_inode_state() {
+            Ok(state) => state,
+            Err(InodeError::InodeDoesNotExist(ino)) => {
+                warn!(parent_ino = ino, child = ?inode, "parent didn't exist when attempting to remove child");
+                return;
+            }
+            Err(_) => unreachable!("inode state access only fails when inode was marked deleted"),
+        };
+
+        match &mut parent_state.kind_data {
+            InodeKindData::Directory {
+                children,
+                writing_children,
+                ..
+            } => {
+                match children.remove_entry(inode.name()) {
+                    Some((name, child)) => {
+                        if child.ino() == inode.ino() {
+                            writing_children.remove(&child.ino());
+                        } else {
+                            children.insert(name, child); // Put it back!
+                        }
+                    }
+                    None => warn!(
+                        parent_ino = inode.parent(),
+                        child_name = inode.name(),
+                        "child already missing from parent"
+                    ),
+                }
+            }
+            _ => unreachable!("parent must be a directory"),
+        }
+    }
+
     /// The kernel tells us when it removes a reference to an [InodeNo] from its internal caches via a forget call.
     /// The kernel may forget a number of references (`n`) in one forget message to our FUSE implementation.
     /// If the lookup count reaches zero, it is safe for the [Superblock] to delete the [Inode].
