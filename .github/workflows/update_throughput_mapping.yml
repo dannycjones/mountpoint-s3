@@ -1,0 +1,50 @@
+name: Update throughput mapping file
+on:
+  schedule:
+    - cron: '0 4 1 */2 *'
+
+jobs:
+  update-throughput-mapping:
+    name: 'Update throughput mapping'
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: write       # Push to a branch
+      id-token: write       # Assume AWS IAM credentials
+      pull-requests: write  # Create pull request
+
+    steps:
+      - uses: actions/checkout@v3
+        with:
+          submodules: true
+      - uses: aws-actions/configure-aws-credentials@v3
+        with:
+          role-to-assume: ${{ vars.ACTIONS_IAM_ROLE }}
+          aws-region: ${{ vars.S3_REGION }}
+          inline-session-policy: >
+            {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Effect":"Allow",
+                  "Action":"ec2:DescribeInstanceTypes",
+                  "Resource":"*"
+                }
+              ]
+            }
+      - name: Get latest throughput information for EC2 instances
+        run: |
+          mountpoint-s3/scripts/network_performance.sh
+      - name: Create pull request
+        uses: peter-evans/create-pull-request@153407881ec5c347639a548ade7d8ad1d6740e38  # v5.0.2
+        with:
+          commit-message: Update network throughput mapping
+          title: Update network throughput mapping
+          body: |
+            New network throughput mapping created.
+
+            Pull request auto-created by [create-pull-request][1]
+
+            [1]: https://github.com/peter-evans/create-pull-request
+          signoff: true
+          branch: update-throughput-mapping
