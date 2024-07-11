@@ -774,84 +774,8 @@ impl SuperblockInner {
             .list_objects(&self.bucket, None, "/", 1, &full_path_suffixed)
             .fuse();
 
-        let mut file_state = None;
-
-        for _ in 0..2 {
-            select_biased! {
-                result = file_lookup => {
-                    match result {
-                        Ok(HeadObjectResult { object, .. }) => {
-                            let stat = InodeStat::for_file(object.size as usize, object.last_modified, Some(object.etag.clone()), object.storage_class, object.restore_status, self.config.cache_config.file_ttl);
-                            file_state = Some(stat);
-                        }
-                        // If the object is not found, might be a directory, so keep going
-                        Err(ObjectClientError::ServiceError(HeadObjectError::NotFound)) => {},
-                        Err(e) => return Err(InodeError::client_error(e, "HeadObject failed", &self.bucket, &full_path)),
-                    }
-                }
-
-                result = dir_lookup => {
-                    let result = result.map_err(|e| InodeError::client_error(e, "ListObjectsV2 failed", &self.bucket, &full_path))?;
-
-                    let found_directory = if result
-                        .common_prefixes
-                        .first()
-                        .map(|prefix| prefix.starts_with(&full_path_suffixed))
-                        .unwrap_or(false)
-                    {
-                        true
-                    } else if result
-                        .objects
-                        .first()
-                        .map(|object| object.key.starts_with(&full_path_suffixed))
-                        .unwrap_or(false)
-                    {
-                        if result.objects[0].key == full_path_suffixed {
-                            trace!(
-                                parent = ?parent_ino,
-                                ?name,
-                                size = result.objects[0].size,
-                                "found a directory that shadows this name"
-                            );
-                            // The S3 Console creates zero-sized keys for explicit directories, so
-                            // let's not warn about those cases.
-                            if result.objects[0].size > 0 {
-                                warn!(
-                                    "key {:?} is not a valid filename (ends in `/`); will be hidden and unavailable",
-                                    full_path_suffixed
-                                );
-                            }
-                        }
-                        true
-                    } else {
-                        false
-                    };
-
-                    // We don't have to wait for the HeadObject to complete because in our
-                    // semantics, directories always shadow files.
-                    if found_directory {
-                        trace!(parent = ?parent_ino, ?name, "lookup ListObjects found a directory");
-                        let stat = InodeStat::for_directory(self.mount_time, self.config.cache_config.dir_ttl);
-                        return Ok(Some(RemoteLookup { kind: InodeKind::Directory, stat }));
-                    }
-                }
-            }
-        }
-
-        // If we reach here, the ListObjects didn't find a shadowing directory, so we know we either
-        // have a valid file, or both requests failed to find the object so the file must not exist remotely
-        if let Some(mut stat) = file_state {
-            trace!(parent = ?parent_ino, ?name, etag =? stat.etag, "found a regular file in S3");
-            // Update the validity of the stat in case the racing ListObjects took a long time
-            stat.update_validity(self.config.cache_config.file_ttl);
-            Ok(Some(RemoteLookup {
-                kind: InodeKind::File,
-                stat,
-            }))
-        } else {
-            trace!(parent = ?parent_ino, ?name, "not found");
-            Ok(None)
-        }
+        let stat = InodeStat::for_directory(self.mount_time, self.config.cache_config.dir_ttl);
+        return Ok(Some(RemoteLookup { kind: InodeKind::Directory, stat }));
     }
 
     /// Update the inode with the given name in a parent directory with the remote data.
