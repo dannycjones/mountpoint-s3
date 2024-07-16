@@ -94,6 +94,7 @@ pub struct S3ClientConfig {
     max_attempts: Option<NonZeroUsize>,
     read_backpressure: bool,
     initial_read_window: usize,
+    network_interface_names: Option<Vec<String>>,
 }
 
 impl Default for S3ClientConfig {
@@ -111,6 +112,7 @@ impl Default for S3ClientConfig {
             max_attempts: None,
             read_backpressure: false,
             initial_read_window: DEFAULT_PART_SIZE,
+            network_interface_names: None,
         }
     }
 }
@@ -203,6 +205,13 @@ impl S3ClientConfig {
     #[must_use = "S3ClientConfig follows a builder pattern"]
     pub fn initial_read_window(mut self, initial_read_window: usize) -> Self {
         self.initial_read_window = initial_read_window;
+        self
+    }
+
+    /// Set a list of network interfaces to distribute S3 requests over
+    #[must_use = "S3ClientConfig follows a builder pattern"]
+    pub fn network_interface_names(mut self, network_interface_names: Vec<String>) -> Self {
+        self.network_interface_names = Some(network_interface_names);
         self
     }
 }
@@ -378,6 +387,10 @@ impl S3CrtClientInner {
                     max_part_size / 1024 / 1024 / 1024
                 )));
             }
+        }
+
+        if let Some(network_interface_names) = config.network_interface_names {
+            client_config.network_interface_names(network_interface_names);
         }
 
         let user_agent = config.user_agent.unwrap_or_else(|| UserAgent::new(None));
