@@ -318,12 +318,11 @@ pub struct CliArgs {
     #[cfg(feature = "multiple-nw-iface")]
     #[clap(
         long,
-        help = "One or more comma-delimited network interfaces for Mountpoint to use when accessing S3. Requires Linux 5.7+ or running as root.",
+        help = "One or more network interfaces for Mountpoint to use when accessing S3. Requires Linux 5.7+ or running as root.",
         help_heading = CLIENT_OPTIONS_HEADER,
-        value_delimiter = ',',
-        value_name = "INTERFACE_NAMES",
+        value_name = "NETWORK_INTERFACE",
     )]
-    pub network_interfaces: Option<Vec<String>>,
+    pub bind: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone)]
@@ -646,7 +645,7 @@ pub fn create_s3_client(args: &CliArgs) -> anyhow::Result<(S3CrtClient, EventLoo
         user_agent.key_value("mp-cache-ttl", &ttl.to_string());
     }
     #[cfg(feature = "multiple-nw-iface")]
-    if let Some(interfaces) = &args.network_interfaces {
+    if let Some(interfaces) = &args.bind {
         user_agent.key_value("mp-nw-interfaces", &interfaces.len().to_string());
     }
 
@@ -657,7 +656,7 @@ pub fn create_s3_client(args: &CliArgs) -> anyhow::Result<(S3CrtClient, EventLoo
         .write_part_size(args.write_part_size.unwrap_or(args.part_size) as usize)
         .user_agent(user_agent);
     #[cfg(feature = "multiple-nw-iface")]
-    if let Some(interfaces) = &args.network_interfaces {
+    if let Some(interfaces) = &args.bind {
         client_config = client_config.network_interface_names(interfaces.clone());
     }
     if args.requester_pays {
