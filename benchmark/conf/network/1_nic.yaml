@@ -1,0 +1,3 @@
+interface_names:
+  - ens32
+maximum_throughput_gbps: !!null
