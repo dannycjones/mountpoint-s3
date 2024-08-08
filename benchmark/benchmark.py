@@ -53,6 +53,7 @@ def _mount_mp(cfg: DictConfig, mount_dir :str) -> str:
         "--log-metrics",
         f"--log-directory={MP_LOGS_DIRECTORY}",
         "--write-part-size=16777216", # 16MiB
+        "--upload-checksums=off", # testing for S3 on edge
     ]
     if cfg['s3_prefix'] is not None:
         subprocess_args.append(f"--prefix={cfg['s3_prefix']}")

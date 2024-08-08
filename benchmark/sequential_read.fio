@@ -10,7 +10,7 @@ thread
 ramp_time=10s # Avoid any chance of cold S3 influencing the result
 size=${SIZE_GIB}Gi
 ; filename=${SIZE_GIB}GiB.bin
-filename_format=j$jobnum_${SIZE_GIB}GiB.bin
+filename_format=j$jobnum_${SIZE_GIB}GiB_nochecksum.bin
 rw=read
 ioengine=sync
 fallocate=none
