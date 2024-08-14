@@ -23,7 +23,7 @@ available_network_interfaces:
 
 mountpoint_binary: "../target/release/mount-s3"
 mountpoint_debug: false
-mountpoint_debug_crt: true
+mountpoint_debug_crt: false
 
 hydra:
   help:
