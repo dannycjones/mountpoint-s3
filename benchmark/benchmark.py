@@ -71,8 +71,24 @@ def _mount_mp(cfg: DictConfig, mount_dir :str) -> str:
             subprocess_args.append(f"--maximum-throughput-gbps={network['maximum_throughput_gbps']}")
 
     log.info(f"Mounting S3 bucket {bucket} using the following command: %s", " ".join(subprocess_args))
-    output = subprocess.check_output(subprocess_args)
+    output = subprocess.check_output(subprocess_args, env={"PID_FILE": "mount-s3.pid"})
     log.info("From Mountpoint: %s", output.decode("utf-8").strip())
+
+    with open("mount-s3.pid") as pid_file:
+        pid = pid_file.read().rstrip()
+    log.debug("Mountpoint PID: %s", pid)
+
+    subprocess_args = [
+        "/usr/bin/sudo",
+        "/usr/bin/perf",
+        "record",
+        "-F",
+        "99", # Hz
+        "-p",
+        pid,
+    ]
+    log.debug(f"Starting perf profile recording using the following command: %s", " ".join(subprocess_args))
+    _ = subprocess.check_output(subprocess_args)
 
     return mountpoint_version_output
 
