@@ -88,7 +88,11 @@ def _mount_mp(cfg: DictConfig, mount_dir :str) -> str:
         pid,
     ]
     log.debug(f"Starting perf profile recording using the following command: %s", " ".join(subprocess_args))
-    _ = subprocess.check_output(subprocess_args)
+    try:
+        _ = subprocess.check_output(subprocess_args)
+    except subprocess.CalledProcessError as e:
+        log.error("Failed to start perf profile recording: %s", e)
+        raise e
 
     return mountpoint_version_output
 
