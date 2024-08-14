@@ -78,21 +78,23 @@ def _mount_mp(cfg: DictConfig, mount_dir :str) -> str:
         pid = pid_file.read().rstrip()
     log.debug("Mountpoint PID: %s", pid)
 
-    subprocess_args = [
-        "/usr/bin/sudo",
-        "/usr/bin/perf",
-        "record",
-        "-F",
-        "99", # Hz
-        "-p",
-        pid,
-    ]
-    log.debug(f"Starting perf profile recording using the following command: %s", " ".join(subprocess_args))
-    try:
-        _ = subprocess.check_output(subprocess_args)
-    except subprocess.CalledProcessError as e:
-        log.error("Failed to start perf profile recording: %s", e)
-        raise e
+    if cfg['wait_for_perf_attach']:
+        input("Press Enter to continue...") # so that I can attach perf
+        # subprocess_args = [
+        #     "/usr/bin/sudo",
+        #     "/usr/bin/perf",
+        #     "record",
+        #     "-F",
+        #     "99", # Hz
+        #     "-p",
+        #     pid,
+        # ]
+        # log.debug(f"Starting perf profile recording using the following command: %s", " ".join(subprocess_args))
+        # try:
+        #     _ = subprocess.check_output(subprocess_args)
+        # except subprocess.CalledProcessError as e:
+        #     log.error("Failed to start perf profile recording: %s", e)
+        #     raise e
 
     return mountpoint_version_output
 
