@@ -25,6 +25,7 @@ class Metadata(object):
     """
     start_time: str
     end_time: str
+    elapsed: str
     mp_version: str
 
 def _mount_mp(cfg: DictConfig, mount_dir :str) -> str:
@@ -126,6 +127,40 @@ def _run_fio(cfg: DictConfig, mount_dir: str) -> tuple[datetime, datetime]:
     log.info(f"FIO job complete now at %s", end_time)
     return start_time, end_time
 
+
+def _run_dd(cfg: DictConfig, mount_dir: str) -> tuple[datetime, datetime]:
+    """
+    Run the DD workload against the file system.
+
+    Returns the start and end times of the workload.
+    """
+
+    BASH_BINARY="/usr/bin/bash"
+
+    subprocess_args = [
+        BASH_BINARY,
+        hydra.utils.to_absolute_path("dd_bench.bash"),
+        mount_dir,
+        str(cfg['application_workers']),
+        str(cfg['direct_io']),
+    ]
+    subprocess_env = {}
+    start_time = datetime.now(tz=timezone.utc)
+    log.debug(f"Running DD workload script with args: %s; env: %s", subprocess_args, subprocess_env)
+    log.info(f"DD workload starting now at %s", start_time)
+    subprocess.check_output(subprocess_args, env=subprocess_env)
+    end_time = datetime.now(tz=timezone.utc)
+    log.info(f"DD workload complete now at %s", end_time)
+    return start_time, end_time
+
+def _run_workload(cfg: DictConfig, mount_dir: str) -> tuple[datetime, datetime]:
+    if cfg['workload'] == "fio":
+        return _run_fio(cfg, mount_dir)
+    elif cfg['workload'] == "dd":
+        return _run_dd(cfg, mount_dir)
+    else:
+        raise ValueError(f"Unknown workload: {cfg['workload']}")
+
 def _unmount_mp(mount_dir: str) -> None:
     subprocess.check_output(["/usr/bin/umount", mount_dir])
     log.info(f"{mount_dir} unmounted")
@@ -163,8 +198,8 @@ def run_experiment(cfg: DictConfig) -> None:
     mount_dir = tempfile.mkdtemp(suffix=".mountpoint-s3")
     try:
         mp_version = _mount_mp(cfg, mount_dir)
-        start_time, end_time = _run_fio(cfg, mount_dir)
-        metadata = Metadata(start_time=start_time, end_time=end_time, mp_version=mp_version)
+        start_time, end_time = _run_workload(cfg, mount_dir)
+        metadata = Metadata(start_time=start_time, end_time=end_time, elapsed=end_time-start_time, mp_version=mp_version)
     finally:
         _unmount_mp(mount_dir)
         os.rmdir(mount_dir)
