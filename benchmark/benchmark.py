@@ -5,6 +5,8 @@ import logging
 import os
 import subprocess
 import tempfile
+from typing import Optional
+import urllib.request
 
 import hydra
 from omegaconf import DictConfig
@@ -27,6 +29,7 @@ class Metadata(object):
     end_time: str
     elapsed: str
     mp_version: str
+    ec2_instance_id: Optional[str] = None
 
 def _mount_mp(cfg: DictConfig, mount_dir :str) -> str:
     """
@@ -186,6 +189,24 @@ def _postprocessing(metadata: Metadata) -> None:
     _collect_logs()
     _write_metadata(metadata)
 
+def _get_ec2_instance_id() -> Optional[str]:
+    if os.getenv("AWS_EC2_METADATA_DISABLED") == "true":
+        return None
+
+    token_url = "http://169.254.169.254/latest/api/token"
+    token_request = urllib.request.Request(token_url, method='PUT')
+    token_request.add_header("X-aws-ec2-metadata-token-ttl-seconds", "21600")
+    token_response = urllib.request.urlopen(token_request)
+    token = token_response.read().decode()
+
+    metadata_url = "http://169.254.169.254/latest/meta-data/instance-id"
+    metadata_request = urllib.request.Request(metadata_url, headers={"X-aws-ec2-metadata-token": token})
+    metadata_response = urllib.request.urlopen(metadata_request)
+    instance_id = metadata_response.read().decode()
+
+    return instance_id
+
+
 @hydra.main(version_base=None, config_path="conf", config_name="config")
 def run_experiment(cfg: DictConfig) -> None:
     """
@@ -195,11 +216,18 @@ def run_experiment(cfg: DictConfig) -> None:
     We should collect all of the logs and metric and dump them in the output directory.
     """
     log.info("Experiment starting")
+    instance_id = _get_ec2_instance_id()
     mount_dir = tempfile.mkdtemp(suffix=".mountpoint-s3")
     try:
         mp_version = _mount_mp(cfg, mount_dir)
         start_time, end_time = _run_workload(cfg, mount_dir)
-        metadata = Metadata(start_time=start_time, end_time=end_time, elapsed=end_time-start_time, mp_version=mp_version)
+        metadata = Metadata(
+            start_time=start_time,
+            end_time=end_time,
+            elapsed=end_time-start_time,
+            mp_version=mp_version,
+            ec2_instance_id=instance_id,
+        )
     finally:
         _unmount_mp(mount_dir)
         os.rmdir(mount_dir)
