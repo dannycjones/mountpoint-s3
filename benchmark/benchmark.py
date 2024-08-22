@@ -54,6 +54,8 @@ def _mount_mp(cfg: DictConfig, mount_dir :str) -> str:
         mount_dir,
         f"--metadata-ttl={cfg['metadata_ttl']}",
         "--log-metrics",
+        "--allow-overwrite",
+        "--allow-delete",
         f"--log-directory={MP_LOGS_DIRECTORY}",
         "--write-part-size=16777216", # 16MiB, to allow upload of 100GiB
     ]
@@ -84,28 +86,27 @@ def _run_fio(cfg: DictConfig, mount_dir: str) -> tuple[datetime, datetime]:
     """
     Run the FIO workload against the file system.
 
-    Returns the start and end times of the workload.
+    Returns the overall start and end times of the benchmarking.
     """
     FIO_BINARY = "/usr/bin/fio"
-    subprocess_args = [
-        FIO_BINARY,
-        "--output=fio-output.json",
-        "--output-format=json",
-        "--eta=never",
-        f"--directory={mount_dir}",
-        hydra.utils.to_absolute_path("sequential_read.fio"),
-    ]
-    subprocess_env = {
-        "NUMJOBS": str(cfg['application_workers']),
-        "SIZE_GIB": str(100),
-        "DIRECT": str(1 if cfg['direct_io'] else 0),
-    }
     start_time = datetime.now(tz=timezone.utc)
-    log.debug(f"Running FIO with args: %s; env: %s", subprocess_args, subprocess_env)
-    log.info(f"FIO job starting now at %s", start_time)
-    subprocess.check_output(subprocess_args, env=subprocess_env)
+    for job in cfg["fio_benchmarks"]:
+        subprocess_args = [
+            FIO_BINARY,
+            f"--output=fio_out_{job}.json",
+            "--output-format=json",
+            "--eta=never",
+            f"--directory={mount_dir}",
+            hydra.utils.to_absolute_path(f"fio/{job}.fio"),
+        ]
+        subprocess_env = {
+            "NUMJOBS": str(cfg['application_workers']),
+            "SIZE_GIB": str(100),
+            "DIRECT": str(1 if cfg['direct_io'] else 0),
+        }
+        log.debug(f"Running FIO with args: %s; env: %s", subprocess_args, subprocess_env)
+        subprocess.check_output(subprocess_args, env=subprocess_env)
     end_time = datetime.now(tz=timezone.utc)
-    log.info(f"FIO job complete now at %s", end_time)
     return start_time, end_time
 
 def _unmount_mp(mount_dir: str) -> None:

@@ -1,0 +1,7 @@
+[global]
+include global_incl.fio
+
+[sequential_read]
+filename_format=j$jobnum_${SIZE_GIB}GiB_nochecksum.bin ; TODO: fix naming
+rw=read
+fallocate=none

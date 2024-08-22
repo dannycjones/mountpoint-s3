@@ -22,6 +22,11 @@ available_network_interfaces:
   - interface_name: eth2
   - interface_name: eth3
 
+fio_benchmarks:
+  - "sequential_read"
+  - "random_read"
+  - "sequential_write"
+
 mountpoint_binary: "../target/release/mount-s3"
 mountpoint_debug: false
 mountpoint_debug_crt: false
