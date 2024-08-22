@@ -3,6 +3,7 @@ import dataclasses
 import json
 import logging
 import os
+from os import path
 import subprocess
 import tempfile
 from typing import Optional
@@ -91,21 +92,26 @@ def _run_fio(cfg: DictConfig, mount_dir: str) -> tuple[datetime, datetime]:
     FIO_BINARY = "/usr/bin/fio"
     start_time = datetime.now(tz=timezone.utc)
     for job in cfg["fio_benchmarks"]:
-        subprocess_args = [
-            FIO_BINARY,
-            f"--output=fio_out_{job}.json",
-            "--output-format=json",
-            "--eta=never",
-            f"--directory={mount_dir}",
-            hydra.utils.to_absolute_path(f"fio/{job}.fio"),
-        ]
-        subprocess_env = {
-            "NUMJOBS": str(cfg['application_workers']),
-            "SIZE_GIB": str(100),
-            "DIRECT": str(1 if cfg['direct_io'] else 0),
-        }
-        log.debug(f"Running FIO with args: %s; env: %s", subprocess_args, subprocess_env)
-        subprocess.check_output(subprocess_args, env=subprocess_env)
+        job_dir = f"fio_out/{job}/"
+        for iteration in range(cfg["iterations"]):
+            iter_dir = path.join(job_dir, str(iteration))
+            os.makedirs(iter_dir, exist_ok=True)
+
+            subprocess_args = [
+                FIO_BINARY,
+                f"--output=fio_out/{job}/{iteration}.json",
+                "--output-format=json",
+                "--eta=never",
+                f"--directory={mount_dir}",
+                hydra.utils.to_absolute_path(f"fio/{job}.fio"),
+            ]
+            subprocess_env = {
+                "NUMJOBS": str(cfg['application_workers']),
+                "SIZE_GIB": str(100),
+                "DIRECT": str(1 if cfg['direct_io'] else 0),
+            }
+            log.debug(f"Running FIO with args: %s; env: %s", subprocess_args, subprocess_env)
+            subprocess.check_output(subprocess_args, env=subprocess_env)
     end_time = datetime.now(tz=timezone.utc)
     return start_time, end_time
 
