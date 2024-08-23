@@ -109,6 +109,7 @@ def _run_fio(cfg: DictConfig, mount_dir: str) -> tuple[datetime, datetime]:
                 "NUMJOBS": str(cfg['application_workers']),
                 "SIZE_GIB": str(100),
                 "DIRECT": str(1 if cfg['direct_io'] else 0),
+                "IO_ENGINE": str("libaio" if cfg['direct_io'] else "psync"),
             }
             log.debug(f"Running FIO with args: %s; env: %s", subprocess_args, subprocess_env)
             subprocess.check_output(subprocess_args, env=subprocess_env)
