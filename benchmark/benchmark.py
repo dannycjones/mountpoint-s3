@@ -30,6 +30,7 @@ class Metadata(object):
     end_time: str
     mp_version: str
     ec2_instance_id: Optional[str] = None
+    success: bool = False
 
 def _mount_mp(cfg: DictConfig, mount_dir :str) -> str:
     """
@@ -83,14 +84,11 @@ def _mount_mp(cfg: DictConfig, mount_dir :str) -> str:
 
     return mountpoint_version_output
 
-def _run_fio(cfg: DictConfig, mount_dir: str) -> tuple[datetime, datetime]:
+def _run_fio(cfg: DictConfig, mount_dir: str) -> None:
     """
     Run the FIO workload against the file system.
-
-    Returns the overall start and end times of the benchmarking.
     """
     FIO_BINARY = "/usr/bin/fio"
-    start_time = datetime.now(tz=timezone.utc)
     for job in cfg["fio_benchmarks"]:
         job_dir = f"fio_out/{job}/"
         for iteration in range(cfg["iterations"]):
@@ -113,8 +111,6 @@ def _run_fio(cfg: DictConfig, mount_dir: str) -> tuple[datetime, datetime]:
             }
             log.debug(f"Running FIO with args: %s; env: %s", subprocess_args, subprocess_env)
             subprocess.check_output(subprocess_args, env=subprocess_env)
-    end_time = datetime.now(tz=timezone.utc)
-    return start_time, end_time
 
 def _unmount_mp(mount_dir: str) -> None:
     subprocess.check_output(["/usr/bin/umount", mount_dir])
@@ -168,22 +164,29 @@ def run_experiment(cfg: DictConfig) -> None:
     We should collect all of the logs and metric and dump them in the output directory.
     """
     log.info("Experiment starting")
+    start_time = datetime.now(tz=timezone.utc)
     instance_id = _get_ec2_instance_id()
+    success = False
     mount_dir = tempfile.mkdtemp(suffix=".mountpoint-s3")
     try:
         mp_version = _mount_mp(cfg, mount_dir)
-        start_time, end_time = _run_fio(cfg, mount_dir)
+        _run_fio(cfg, mount_dir)
+        success = True
+    except subprocess.CalledProcessError:
+        log.exception("FIO failed")
+    finally:
+        end_time = datetime.now(tz=timezone.utc)
+        _unmount_mp(mount_dir)
+        os.rmdir(mount_dir)
         metadata = Metadata(
             start_time=start_time,
             end_time=end_time,
             mp_version=mp_version,
             ec2_instance_id=instance_id,
+            success=success,
         )
-    finally:
-        _unmount_mp(mount_dir)
-        os.rmdir(mount_dir)
-    _postprocessing(metadata)
-    log.info("Experiment complete")
+        _postprocessing(metadata)
+    log.info("Experiment ended")
 
 if __name__ == "__main__":
     run_experiment()
