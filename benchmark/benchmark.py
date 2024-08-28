@@ -84,9 +84,10 @@ def _run_fio(cfg: DictConfig, mount_dir: str) -> None:
     job_names = ["sequential_read"]
     for job_name in job_names:
         job_out_dir = f"fio_out/{job_name}/"
+        fio_output = path.join(job_out_dir, "result.json")
         subprocess_args = [
             FIO_BINARY,
-            f"--output={path.join(job_out_dir, "result.json")}",
+            f"--output={fio_output}",
             "--output-format=json",
             "--eta=never",
             f"--directory={mount_dir}",
