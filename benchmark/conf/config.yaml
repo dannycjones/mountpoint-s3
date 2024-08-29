@@ -3,7 +3,7 @@ defaults:
   - network: default
 
 s3_bucket: ???
-s3_prefix: !!null
+s3_prefix: no_checksum/
 
 metadata_ttl: "indefinite"
 
@@ -17,19 +17,20 @@ direct_io: false
 
 # To be used by other configurations to vary number of interfaces used
 available_network_interfaces:
-  - interface_name: ???
+  - interface_name: ens32
+  - interface_name: ens33
+  - interface_name: ens64
+  - interface_name: ens65
 
 fio_benchmarks:
   - "sequential_read"
-  - "random_read"
-  - "sequential_write"
 
 mountpoint_binary: "../target/release/mount-s3"
 mountpoint_debug: false
 mountpoint_debug_crt: false
 
 # For S3 implementations not supporting additional checksums. Passed as `--upload-checksums` argument.
-upload_checksums: !!null
+upload_checksums: "off"
 
 iterations: 1
 
