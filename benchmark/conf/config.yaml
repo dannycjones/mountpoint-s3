@@ -35,6 +35,8 @@ wait_for_profiler_attach: false
 # For S3 implementations not supporting additional checksums. Passed as `--upload-checksums` argument.
 upload_checksums: "off"
 
+use_fopen_keep_cache: false
+
 iterations: 1
 
 hydra:

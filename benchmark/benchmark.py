@@ -79,7 +79,10 @@ def _mount_mp(cfg: DictConfig, mount_dir :str) -> str:
             subprocess_args.append(f"--maximum-throughput-gbps={network['maximum_throughput_gbps']}")
 
     log.info(f"Mounting S3 bucket {bucket} using the following command: %s", " ".join(subprocess_args))
-    output = subprocess.check_output(subprocess_args, env={"PID_FILE": "mount-s3.pid"})
+    subprocess_env = {"PID_FILE": "mount-s3.pid"}
+    if cfg['use_fopen_keep_cache']:
+        subprocess_env["FOPEN_KEEP_CACHE"] = "true"
+    output = subprocess.check_output(subprocess_args, env=subprocess_env)
     log.info("From Mountpoint: %s", output.decode("utf-8").strip())
 
     with open("mount-s3.pid") as pid_file:
