@@ -11,7 +11,6 @@ use thiserror::Error;
 use time::OffsetDateTime;
 use tracing::{debug, error, trace, Level};
 
-use fuser::consts::FOPEN_DIRECT_IO;
 use fuser::{FileAttr, KernelConfig};
 use mountpoint_s3_client::types::ETag;
 use mountpoint_s3_client::ObjectClient;
@@ -819,7 +818,13 @@ where
         debug!(fh, ino, "new file handle created");
         self.file_handles.write().await.insert(fh, Arc::new(handle));
 
-        let reply_flags = if direct_io { FOPEN_DIRECT_IO } else { 0 };
+        let mut reply_flags = 0;
+        if direct_io {
+            reply_flags |= fuser::consts::FOPEN_DIRECT_IO;
+        }
+        if std::env::var("FOPEN_KEEP_CACHE").is_ok() {
+            reply_flags |= fuser::consts::FOPEN_KEEP_CACHE;
+        }
 
         Ok(Opened { fh, flags: reply_flags })
     }
