@@ -185,7 +185,7 @@ impl<W: Work> WorkerPool<W> {
         self.state.idle_worker_count.fetch_add(1, Ordering::SeqCst);
         let clone = (*self).clone();
         let worker = thread::Builder::new()
-            .name(format!("fuse-worker-{i}"))
+            .name(format!("mp-fuse-worker"))
             .spawn(move || clone.run(i))
             .context("failed to spawn worker threads")?;
         self.workers.send(worker).unwrap();
