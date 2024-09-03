@@ -641,6 +641,27 @@ where
                 .add_capabilities(fuser::consts::FUSE_ATOMIC_O_TRUNC)
                 .expect("The host must support FUSE_ATOMIC_O_TRUNC capability in order to allow overwrites");
         }
+        config.add_capabilities(fuser::consts::FUSE_MAX_PAGES).unwrap();
+
+        if let Some(max_readahead) = std::env::var_os("MOUNTPOINT_UNSTABLE_FUSE_MAX_READAHEAD") {
+            let max_readahead = max_readahead.to_str().unwrap().parse::<u32>().unwrap();
+            match config.set_max_readahead(max_readahead) {
+                Ok(prev) => {
+                    tracing::warn!("max_readahead set to {max_readahead} successfully, it was prev {prev}");
+                },
+                Err(kernel_max_value) => {
+                    config.set_max_readahead(kernel_max_value).expect("should succeed using max value indicated by kernel");
+                    tracing::warn!("Could not set max_readahead to {max_readahead}, using {kernel_max_value}");
+                }
+            }
+        };
+
+        // 128?
+        if let Some(max_background) = std::env::var_os("MOUNTPOINT_UNSTABLE_FUSE_MAX_BACKGROUND") {
+            // this allows us to buffer more read (meta skips this)... does it make sense?
+            let max_background = max_background.to_str().unwrap().parse::<u16>().unwrap();
+            config.set_max_background(max_background).unwrap();
+        }
         Ok(())
     }
 

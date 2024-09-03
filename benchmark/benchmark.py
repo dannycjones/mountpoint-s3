@@ -82,6 +82,10 @@ def _mount_mp(cfg: DictConfig, mount_dir :str) -> str:
     subprocess_env = {"PID_FILE": "mount-s3.pid"}
     if cfg['use_fopen_keep_cache']:
         subprocess_env["FOPEN_KEEP_CACHE"] = "true"
+    if cfg["fuse_max_background"]:
+        subprocess_env["FUSE_MAX_BACKGROUND"] = str(cfg["fuse_max_background"])
+    if cfg["fuse_max_readahead"]:
+        subprocess_env["FUSE_MAX_READAHEAD"] = str(cfg["fuse_max_readahead"])
     output = subprocess.check_output(subprocess_args, env=subprocess_env)
     log.info("From Mountpoint: %s", output.decode("utf-8").strip())
 

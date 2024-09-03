@@ -15,6 +15,9 @@ application_workers: 4
 
 direct_io: false
 
+fuse_max_background: !!null # 12 # based on kernel default
+fuse_max_readahead: !!null # 131072 # based on kernel default
+
 # To be used by other configurations to vary number of interfaces used
 available_network_interfaces:
   - interface_name: ens32
