@@ -121,7 +121,7 @@ def _run_fio(cfg: DictConfig, mount_dir: str) -> None:
             ]
             subprocess_env = {
                 "NUMJOBS": str(cfg['application_workers']),
-                "SIZE_GIB": str(100),
+                "SIZE_GIB": str(20),
                 "DIRECT": str(1 if cfg['direct_io'] else 0),
                 "UNIQUE_DIR": datetime.now(tz=timezone.utc).isoformat(),
                 "IO_ENGINE": str("libaio" if cfg['direct_io'] else "psync"),
