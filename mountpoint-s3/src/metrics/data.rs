@@ -159,6 +159,7 @@ pub struct Histogram {
 
 impl metrics::HistogramFn for Histogram {
     fn record(&self, value: f64) {
+        tracing::trace!(value, value_u64 = (value as u64), "histogram record: {}", value);
         self.histogram
             .lock()
             .unwrap()
