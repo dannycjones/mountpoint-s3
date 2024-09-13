@@ -374,9 +374,9 @@ pub struct MockObject {
 }
 
 impl MockObject {
-    pub fn read(&self, offset: u64, size: usize) -> Box<[u8]> {
-        let read_size = self.size.saturating_sub(offset as usize);
-        (self.generator)(offset, size.min(read_size))
+    pub fn read(&self, _offset: u64, size: usize) -> Box<[u8]> {
+        let bytes: Vec<_> = vec![1u8; size];
+        bytes.into_boxed_slice()
     }
 
     pub fn from_bytes(bytes: &[u8], etag: ETag) -> Self {
