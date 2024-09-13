@@ -140,18 +140,20 @@ where
         lock: Option<u64>,
         reply: ReplyData,
     ) {
-        let mut bytes_sent = 0;
+        // let mut bytes_sent = 0;
 
-        match block_on(self.fs.read(ino, fh, offset, size, flags, lock).in_current_span()) {
-            Ok(data) => {
-                bytes_sent = data.len();
-                reply.data(&data);
-            }
-            Err(err) => fuse_error!("read", reply, err),
-        }
+        // match block_on(self.fs.read(ino, fh, offset, size, flags, lock).in_current_span()) {
+        //     Ok(data) => {
+        //         bytes_sent = data.len();
+        //         reply.data(&data);
+        //     }
+        //     Err(err) => fuse_error!("read", reply, err),
+        // }
 
-        metrics::counter!("fuse.total_bytes", "type" => "read").increment(bytes_sent as u64);
-        metrics::histogram!("fuse.io_size", "type" => "read").record(bytes_sent as f64);
+        // metrics::counter!("fuse.total_bytes", "type" => "read").increment(bytes_sent as u64);
+        // metrics::histogram!("fuse.io_size", "type" => "read").record(bytes_sent as f64);
+        let data = vec![1u8; size as usize].into_boxed_slice();
+        reply.data(data.as_ref())
     }
 
     #[instrument(level="warn", skip_all, fields(req=_req.unique(), ino=parent, name=field::Empty))]
