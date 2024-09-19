@@ -112,14 +112,27 @@ def _run_fio(cfg: DictConfig, mount_dir: str) -> None:
 
         for iteration in range(cfg["iterations"]):
             fio_output = path.join(job_out_dir, f"{iteration}.json")
-            subprocess_args = [
+
+            subprocess_args = []
+
+            if cfg['with_perf']:
+                subprocess_args.extend([
+                    "perf",
+                    "record",
+                    "-F", "99",
+                    "-a",
+                    "-g",
+                    "--",
+                ])
+
+            subprocess_args.extend([
                 FIO_BINARY,
                 f"--output={fio_output}",
                 "--output-format=json",
                 "--eta=never",
                 f"--directory={mount_dir}",
                 hydra.utils.to_absolute_path(f"fio/{job_name}.fio"),
-            ]
+            ])
             subprocess_env = {
                 "NUMJOBS": str(cfg['application_workers']),
                 "SIZE_GIB": str(100),
