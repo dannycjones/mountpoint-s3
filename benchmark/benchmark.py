@@ -100,6 +100,9 @@ def _mount_mp(cfg: DictConfig, metadata: dict[str, any], mount_dir :str) -> str:
 
     return mountpoint_version_output
 
+import subprocess
+from subprocess import Popen, PIPE
+
 def _run_fio(cfg: DictConfig, mount_dir: str) -> None:
     """
     Run the FIO workload against the file system.
@@ -141,7 +144,22 @@ def _run_fio(cfg: DictConfig, mount_dir: str) -> None:
                 "IO_ENGINE": str("libaio" if cfg['direct_io'] else "psync"),
             }
             log.info(f"Running FIO with args: %s; env: %s", subprocess_args, subprocess_env)
-            subprocess.check_output(subprocess_args, env=subprocess_env)
+
+            # Use Popen instead of check_output
+            with Popen(subprocess_args, env=subprocess_env) as process:
+                stdout, stderr = process.communicate()
+
+                if process.returncode != 0:
+                    log.error(f"FIO process failed with return code {process.returncode}")
+                    # log.error(f"Stderr: {stderr.decode('utf-8')}")
+                    raise subprocess.CalledProcessError(process.returncode, subprocess_args)
+                else:
+                    log.info("FIO process completed successfully")
+                    # log.debug(f"Stdout: {stdout.decode('utf-8')}")
+
+            if cfg['with_perf']:
+                os.rename("perf.data", path.join(job_out_dir, f"{iteration}.perf.data"))
+
 
 def _unmount_mp(mount_dir: str) -> None:
     """
