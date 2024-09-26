@@ -2,6 +2,8 @@
 # It is not intended for manual editing.
 version = 3
 
+# don't edit this manually
+
 [[package]]
 name = "addr2line"
 version = "0.21.0"
