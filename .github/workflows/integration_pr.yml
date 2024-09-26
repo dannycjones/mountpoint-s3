@@ -4,7 +4,8 @@ on:
   pull_request_target:
     branches:
       - "main"
-      - "*feature/**"
+      - "feature/**"
+      - "private-feature/**"
 
 permissions:
   id-token: write
