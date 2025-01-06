@@ -45,6 +45,11 @@ pub struct Sha256Hasher {
 }
 
 /// Safety: [Sha256Hasher] is not [Clone] and owns the inner [aws_hash].
+///
+/// ```
+/// use mountpoint_s3_crt::checksums::sha256::Sha256Hasher;
+/// static_assertions::assert_not_impl_any!(Sha256Hasher: Copy, Clone);
+/// ```
 unsafe impl Send for Sha256Hasher {}
 
 impl Sha256Hasher {

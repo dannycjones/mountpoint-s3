@@ -45,6 +45,11 @@ pub struct Sha1Hasher {
 }
 
 /// Safety: [Sha1Hasher] is not [Clone] and owns the inner [aws_hash].
+///
+/// ```
+/// use mountpoint_s3_crt::checksums::sha1::Sha1Hasher;
+/// static_assertions::assert_not_impl_any!(Sha1Hasher: Copy, Clone);
+/// ```
 unsafe impl Send for Sha1Hasher {}
 
 impl Sha1Hasher {

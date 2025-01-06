@@ -49,7 +49,12 @@ impl<N: AsRef<OsStr>, V: AsRef<OsStr>> Header<N, V> {
     }
 }
 
-/// A block of HTTP headers that provides a nice API for getting/setting header names and values
+/// A block of HTTP headers that provides a nice API for getting/setting header names and values.
+///
+/// TODO: This type has some bad safety comments -
+///       in particular, it claims that we can implement [Send]/[Sync] since we don't implement [Clone].
+///       However, it is no longer the case that we don't implement [Clone].
+///       When fixed, we should add a Rustdoc test to assert [Clone] is not implemented if that is still a requirement.
 #[derive(Debug)]
 pub struct Headers {
     inner: NonNull<aws_http_headers>,

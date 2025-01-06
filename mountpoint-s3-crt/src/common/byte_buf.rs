@@ -15,6 +15,11 @@ use crate::CrtError as _;
 ///
 /// This type does not implement [Copy] or [Clone].
 /// It is not safe to simply clone the struct, we must allocate a new buffer using [aws_byte_buf_init_copy].
+///
+/// ```
+/// use mountpoint_s3_crt::common::byte_buf::ByteBuf;
+/// static_assertions::assert_not_impl_any!(ByteBuf: Copy, Clone);
+/// ```
 #[derive(Debug)]
 pub struct ByteBuf {
     /// Inner struct, representing the buffer.
