@@ -116,6 +116,13 @@ def _mount_mp(
     if cfg['fuse_threads'] is not None:
         subprocess_args.append(f"--max-threads={cfg['fuse_threads']}")
 
+    if cfg['network'] is not None:
+        network = cfg['network']
+        for network_interface in network['interface_names']:
+            subprocess_args.append(f"--bind={network_interface}")
+        if network['maximum_throughput_gbps'] is not None:
+            subprocess_args.append(f"--maximum-throughput-gbps={network['maximum_throughput_gbps']}")
+
     log.info(f"Mounting S3 bucket {bucket} with args: %s; env: %s", subprocess_args, subprocess_env)
     try:
         output = subprocess.check_output(subprocess_args, env=subprocess_env)

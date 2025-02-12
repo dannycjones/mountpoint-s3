@@ -3,6 +3,7 @@
 
 defaults:
   - _self_
+  - network: default
 
 s3_bucket: ???
 s3_prefix: !!null
@@ -18,6 +19,10 @@ fio_benchmarks: sequential_read  #, random_read, sequential_write
 mountpoint_binary: !!null
 mountpoint_debug: false
 mountpoint_debug_crt: false
+
+# To be used by other configurations to vary number of interfaces used
+available_network_interfaces:
+  - interface_name: ???
 
 # For overriding upload checksums configured for Mountpoint. Passed as `--upload-checksums` argument.
 upload_checksums: !!null
