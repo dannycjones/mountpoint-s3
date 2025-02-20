@@ -27,6 +27,9 @@ available_network_interfaces:
 # For overriding upload checksums configured for Mountpoint. Passed as `--upload-checksums` argument.
 upload_checksums: !!null
 
+# Works automatically ONLY where this script manages compilation. It doesn't work if `mountpoint_binary` is set.
+stub_mode: off # fs_handler
+
 iterations: 1
 
 hydra:
