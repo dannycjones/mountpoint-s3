@@ -33,6 +33,9 @@ upload_checksums: !!null
 mountpoint_max_background: !!null
 mountpoint_congestion_threshold: !!null
 
+# Works automatically ONLY where this script manages compilation. It doesn't work if `mountpoint_binary` is set.
+stub_mode: off # fs_handler
+
 iterations: 1
 
 # Define defaults for these columns, but script will run as MULTIRUN by default

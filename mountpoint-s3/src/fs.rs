@@ -455,6 +455,11 @@ where
             size
         );
 
+        // For inspecting performance, compile with a flag to allow us to just return some zeros.
+        if option_env!("STUB_FS_HANDLER").is_some() {
+            return Ok(vec![0u8; size as usize].into());
+        }
+
         let handle = {
             let file_handles = self.file_handles.read().await;
             match file_handles.get(&fh) {
