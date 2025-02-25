@@ -155,7 +155,12 @@ enum OutputFormat {
 struct CliArgs {
     #[command(subcommand)]
     client: Client,
-    #[arg(long, help = "Desired throughput in Gbps", default_value = "10.0")]
+    #[arg(
+        long,
+        help = "Desired throughput in Gbps",
+        default_value_t = 10.0,
+        visible_alias = "maximum-throughput-gbps"
+    )]
     throughput_target_gbps: f64,
     #[arg(long, help = "Part size for multi-part GET", default_value = "8388608")]
     part_size: usize,
