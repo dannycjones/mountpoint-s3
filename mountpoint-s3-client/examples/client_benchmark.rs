@@ -1,3 +1,4 @@
+use std::ops::Range;
 use std::pin::pin;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
@@ -12,6 +13,7 @@ use mountpoint_s3_client::mock_client::{MockClientConfig, MockObject};
 use mountpoint_s3_client::types::{ETag, GetObjectParams};
 use mountpoint_s3_client::{ObjectClient, S3CrtClient};
 use mountpoint_s3_crt::common::rust_log_adapter::RustLogAdapter;
+use regex::Regex;
 use serde::Serialize;
 use tracing_subscriber::fmt::Subscriber;
 use tracing_subscriber::util::SubscriberInitExt;
@@ -60,6 +62,7 @@ fn run_benchmark(
     output_format: OutputFormat,
     bucket: &str,
     key: &str,
+    range: Option<Range<u64>>,
 ) {
     let mut measurements = if matches!(output_format, OutputFormat::Json) {
         Some(Vec::with_capacity(num_iterations))
@@ -74,10 +77,12 @@ fn run_benchmark(
             for _ in 0..num_downloads {
                 let client = client.clone();
                 let received_size_clone = Arc::clone(&received_size);
+                let range = range.clone();
                 scope.spawn(|| {
                     futures::executor::block_on(async move {
+                        let params = GetObjectParams::new().range(range);
                         let mut request = client
-                            .get_object(bucket, key, &GetObjectParams::new())
+                            .get_object(bucket, key, &params)
                             .await
                             .expect("couldn't create get request");
                         let mut request = pin!(request);
@@ -139,6 +144,12 @@ enum Client {
         region: String,
         #[clap(
             long,
+            help = "Byte range to download (inclusive)",
+            value_parser = parse_range,
+        )]
+        range: Option<Range<u64>>,
+        #[clap(
+            long,
             help = "One or more network interfaces to use when accessing S3. Requires Linux 5.7+ or running as root.",
             value_name = "NETWORK_INTERFACE"
         )]
@@ -149,6 +160,31 @@ enum Client {
         #[arg(help = "Mock object size")]
         object_size: u64,
     },
+}
+
+/// Empty error type, since we don't care too much for the benchmark.
+#[derive(Debug, thiserror::Error)]
+#[error("failed to parse range")]
+struct RangeParseError;
+
+fn parse_range(range: &str) -> Result<Range<u64>, RangeParseError> {
+    let range_regex = Regex::new(r"^(?P<start>[0-9]+)-(?P<end>[0-9]+)$").unwrap();
+    let matches = range_regex.captures(range).expect("failed to recognize range pattern");
+    let start = matches
+        .name("start")
+        .unwrap()
+        .as_str()
+        .parse::<u64>()
+        .expect("failed to parse range start");
+    let end = matches
+        .name("end")
+        .unwrap()
+        .as_str()
+        .parse::<u64>()
+        .expect("failed to parse range end");
+
+    // bytes range is inclusive, but the `Range` type is exclusive, so bump the end by 1
+    Ok(start..(end + 1))
 }
 
 #[derive(Clone, Copy, ValueEnum)]
@@ -194,6 +230,7 @@ fn main() {
             bucket,
             key,
             region,
+            range,
             bind,
         } => {
             let mut config = S3ClientConfig::new().endpoint_config(EndpointConfig::new(&region));
@@ -211,6 +248,7 @@ fn main() {
                 args.output_format,
                 &bucket,
                 &key,
+                range,
             );
         }
         Client::Mock { object_size } => {
@@ -228,7 +266,15 @@ fn main() {
 
             client.add_object(KEY, MockObject::ramp(0xaa, object_size as usize, ETag::for_tests()));
 
-            run_benchmark(client, args.iterations, args.downloads, args.output_format, BUCKET, KEY);
+            run_benchmark(
+                client,
+                args.iterations,
+                args.downloads,
+                args.output_format,
+                BUCKET,
+                KEY,
+                None,
+            );
         }
     }
 }
