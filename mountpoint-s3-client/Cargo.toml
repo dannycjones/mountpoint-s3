@@ -44,6 +44,7 @@ clap = { version = "4.5.27", features = ["derive"] }
 ctor = "0.2.9"
 proptest = "1.6.0"
 rusty-fork = "0.3.0"
+serde = { version = "1.0.218", features = ["derive"] }
 tempfile = "3.15.0"
 test-case = "3.3.1"
 tokio = { version = "1.43.0", features = ["rt", "macros"] }

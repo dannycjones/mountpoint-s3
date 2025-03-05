@@ -4,7 +4,7 @@ use std::sync::Arc;
 use std::thread;
 use std::time::Instant;
 
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
 use futures::StreamExt;
 use mountpoint_s3_client::config::{EndpointConfig, S3ClientConfig};
 use mountpoint_s3_client::mock_client::throughput_client::ThroughputMockClient;
@@ -12,6 +12,7 @@ use mountpoint_s3_client::mock_client::{MockClientConfig, MockObject};
 use mountpoint_s3_client::types::{ETag, GetObjectParams};
 use mountpoint_s3_client::{ObjectClient, S3CrtClient};
 use mountpoint_s3_crt::common::rust_log_adapter::RustLogAdapter;
+use serde::Serialize;
 use tracing_subscriber::fmt::Subscriber;
 use tracing_subscriber::util::SubscriberInitExt;
 use tracing_subscriber::EnvFilter;
@@ -28,13 +29,43 @@ fn init_tracing_subscriber() {
     subscriber.try_init().expect("unable to install global subscriber");
 }
 
+#[derive(Serialize, Debug)]
+struct Measurement {
+    iteration: usize,
+    num_bytes_received: u64,
+    seconds_elapsed: f64,
+    throughput_megabytes_per_second: f64,
+}
+
+impl Measurement {
+    fn new(iteration: usize, num_bytes_received: u64, elapsed: std::time::Duration) -> Self {
+        let seconds_elapsed = elapsed.as_secs_f64();
+
+        let throughput_bytes = num_bytes_received as f64 / seconds_elapsed;
+        let throughput_megabytes_per_second = throughput_bytes / (1024 * 1024) as f64;
+
+        Self {
+            iteration,
+            num_bytes_received,
+            seconds_elapsed,
+            throughput_megabytes_per_second,
+        }
+    }
+}
+
 fn run_benchmark(
     client: impl ObjectClient + Clone + Send,
     num_iterations: usize,
     num_downloads: usize,
+    output_format: OutputFormat,
     bucket: &str,
     key: &str,
 ) {
+    let mut measurements = if matches!(output_format, OutputFormat::Json) {
+        Some(Vec::with_capacity(num_iterations))
+    } else {
+        None
+    };
     for i in 0..num_iterations {
         let start = Instant::now();
         let received_size = Arc::new(AtomicU64::new(0));
@@ -69,13 +100,30 @@ fn run_benchmark(
 
         let elapsed = start.elapsed();
         let received_size = received_size.load(Ordering::SeqCst);
-        println!(
-            "{}: received {} bytes in {:.2}s: {:.2}MiB/s",
-            i,
-            received_size,
-            elapsed.as_secs_f64(),
-            (received_size as f64) / elapsed.as_secs_f64() / (1024 * 1024) as f64
-        );
+        let measurement = Measurement::new(i, received_size, elapsed);
+
+        if matches!(output_format, OutputFormat::Text) {
+            println!(
+                "{}: received {} bytes in {:.2}s: {:.2}MiB/s",
+                measurement.iteration,
+                measurement.num_bytes_received,
+                measurement.seconds_elapsed,
+                measurement.throughput_megabytes_per_second,
+            );
+        }
+
+        if let Some(measurements) = &mut measurements {
+            measurements.push(measurement);
+        }
+    }
+
+    match output_format {
+        OutputFormat::Text => {} // already output per iteration
+        OutputFormat::Json => {
+            let measurements = measurements.expect("vec always exists for JSON");
+            let json = serde_json::to_string(&measurements).expect("JSON serialization of measurements should succeed");
+            println!("{json}");
+        }
     }
 }
 
@@ -97,6 +145,12 @@ enum Client {
     },
 }
 
+#[derive(Clone, Copy, ValueEnum)]
+enum OutputFormat {
+    Text,
+    Json,
+}
+
 #[derive(Parser)]
 struct CliArgs {
     #[command(subcommand)]
@@ -109,6 +163,14 @@ struct CliArgs {
     iterations: usize,
     #[arg(long, help = "Number of concurrent downloads", default_value = "1")]
     downloads: usize,
+    #[arg(
+        short,
+        long,
+        help = "Format of data like the throughput, iteration number, etc..",
+        default_value = "text",
+        value_name = "FORMAT"
+    )]
+    output_format: OutputFormat,
 }
 
 fn main() {
@@ -123,7 +185,14 @@ fn main() {
             config = config.part_size(args.part_size);
             let client = S3CrtClient::new(config).expect("couldn't create client");
 
-            run_benchmark(client, args.iterations, args.downloads, &bucket, &key);
+            run_benchmark(
+                client,
+                args.iterations,
+                args.downloads,
+                args.output_format,
+                &bucket,
+                &key,
+            );
         }
         Client::Mock { object_size } => {
             const BUCKET: &str = "bucket";
@@ -140,7 +209,7 @@ fn main() {
 
             client.add_object(KEY, MockObject::ramp(0xaa, object_size as usize, ETag::for_tests()));
 
-            run_benchmark(client, args.iterations, args.downloads, BUCKET, KEY);
+            run_benchmark(client, args.iterations, args.downloads, args.output_format, BUCKET, KEY);
         }
     }
 }
