@@ -21,6 +21,7 @@ serde = "1.0.217"
 serde_json = "1.0.137"
 sysinfo = "0.33.1"
 tracing = "0.1.41"
+cap = "0.1.2"
 
 [dev-dependencies]
 mountpoint-s3-client = { path = "../mountpoint-s3-client", features = ["mock"] }
