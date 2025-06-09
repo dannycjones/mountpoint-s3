@@ -1,14 +1,16 @@
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::thread;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use anyhow::Context;
-use clap::{value_parser, Parser};
+use clap::{value_parser, Parser, ValueEnum};
 use futures::executor::block_on;
 use mountpoint_s3_client::config::{EndpointConfig, RustLogAdapter, S3ClientConfig};
 use mountpoint_s3_client::types::HeadObjectParams;
 use mountpoint_s3_client::{ObjectClient, S3CrtClient};
+use mountpoint_s3_fs::data_cache::{CacheLimit, DiskDataCache, DiskDataCacheConfig, DEFAULT_CACHE_BLOCK_SIZE};
 use mountpoint_s3_fs::mem_limiter::MemoryLimiter;
 use mountpoint_s3_fs::object::ObjectId;
 use mountpoint_s3_fs::prefetch::{Prefetcher, PrefetcherConfig};
@@ -102,6 +104,46 @@ pub struct CliArgs {
         value_name = "NETWORK_INTERFACE"
     )]
     pub bind: Option<Vec<String>>,
+
+    #[clap(
+        long,
+        help = "Enable caching of object content to the given directory.",
+        value_name = "DIRECTORY"
+    )]
+    pub disk_cache: Option<PathBuf>,
+
+    #[clap(
+        long,
+        help = "Configure how the benchmark cleans the data cache directory.",
+        default_value = "every-iteration",
+        value_name = "MODE"
+    )]
+    pub disk_cache_cleanup: CacheCleanupMode,
+}
+
+#[derive(Clone, Debug)]
+pub enum CacheCleanupMode {
+    /// Never try to clean at start or end of benchmark overall or for iterations.
+    ///
+    /// This can allow effectively a 'warm' cache for testing.
+    Never,
+    /// Try to clean at start and end of every benchmark iteration.
+    ///
+    /// This can allow effectively a 'cold' cache for testing.
+    EveryIteration,
+}
+
+impl ValueEnum for CacheCleanupMode {
+    fn value_variants<'a>() -> &'a [Self] {
+        &[CacheCleanupMode::Never, CacheCleanupMode::EveryIteration]
+    }
+
+    fn to_possible_value(&self) -> Option<clap::builder::PossibleValue> {
+        match self {
+            CacheCleanupMode::Never => Some(clap::builder::PossibleValue::new("never")),
+            CacheCleanupMode::EveryIteration => Some(clap::builder::PossibleValue::new("every-iteration")),
+        }
+    }
 }
 
 fn main() -> anyhow::Result<()> {
@@ -219,4 +261,17 @@ fn make_s3_client_from_args(args: &CliArgs) -> Result<S3CrtClient, impl std::err
         client_config = client_config.network_interface_names(interfaces.clone());
     }
     S3CrtClient::new(client_config)
+}
+
+/// Remove all directory entries recursively under `directory`.
+fn remove_all_entries(directory: &Path) -> std::io::Result<()> {
+    for entry in std::fs::read_dir(directory)? {
+        let path = entry?.path();
+        match (path.is_file(), path.is_dir()) {
+            (true, false) => std::fs::remove_file(&path)?,
+            (false, true) => std::fs::remove_dir_all(&path)?,
+            _ => unreachable!("entry should be exactly one of file or directory"),
+        }
+    }
+    Ok(())
 }
