@@ -108,6 +108,11 @@ impl S3CrtClient {
                 parse_get_object_error,
                 move |result| {
                     if let Err(e) = result {
+                        if let ObjectClientError::ClientError(S3RequestError::CrtError(crt_err)) = e {
+                            if crt_err.raw_error() == mountpoint_s3_crt::common::error::error_codes::aws_http_errors::AWS_ERROR_HTTP_CONNECTION_CLOSED as i32 {
+                                tracing::error!("encountered HTTP connection closed not mitigated by CRT retries");
+                            }
+                        }
                         _ = event_sender.unbounded_send(S3GetObjectEvent::Error(e));
                     }
                     event_sender.close_channel();

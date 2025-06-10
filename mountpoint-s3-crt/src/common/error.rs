@@ -4,6 +4,11 @@ use std::ffi::CStr;
 
 use mountpoint_s3_crt_sys::{aws_error_debug_str, aws_last_error, AWS_OP_SUCCESS};
 
+/// TODO
+pub mod error_codes {
+    pub use mountpoint_s3_crt_sys::aws_http_errors;
+}
+
 /// An error reported by the AWS Common Runtime
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub struct Error(i32);
