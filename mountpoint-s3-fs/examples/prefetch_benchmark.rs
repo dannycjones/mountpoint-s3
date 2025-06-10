@@ -134,11 +134,34 @@ fn main() -> anyhow::Result<()> {
     let runtime = Runtime::new(client.event_loop_group());
 
     for iteration in 0..args.iterations {
-        let manager = Prefetcher::default_builder(client.clone()).build(
-            runtime.clone(),
-            mem_limiter.clone(),
-            PrefetcherConfig::default(),
-        );
+        let manager = {
+            let client = client.clone();
+            let builder = match &args.disk_cache {
+                None => Prefetcher::default_builder(client),
+                Some(cache_directory) => {
+                    if matches!(args.disk_cache_cleanup, CacheCleanupMode::EveryIteration) {
+                        tracing::trace!(
+                            iteration,
+                            ?cache_directory,
+                            "removing contents of cache directory between iterations",
+                        );
+                        // Wait a little for any tasks writing blocks on runtime to complete
+                        std::thread::sleep(Duration::from_millis(2000));
+                        remove_all_entries(cache_directory.as_path())
+                            .context("failed to cleanup cache directory between iterations")?;
+                    }
+
+                    let config = DiskDataCacheConfig {
+                        cache_directory: cache_directory.clone(),
+                        block_size: DEFAULT_CACHE_BLOCK_SIZE,
+                        limit: CacheLimit::Unbounded,
+                    };
+                    let disk_cache = DiskDataCache::new(config);
+                    Prefetcher::caching_builder(disk_cache, client)
+                }
+            };
+            builder.build(runtime.clone(), mem_limiter.clone(), PrefetcherConfig::default())
+        };
 
         let received_bytes = Arc::new(AtomicU64::new(0));
         let start = Instant::now();

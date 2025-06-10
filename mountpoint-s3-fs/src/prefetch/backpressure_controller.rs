@@ -59,6 +59,35 @@ pub struct BackpressureController<Client: ObjectClient> {
     ///
     /// For example, when memory is low we should scale down [Self::preferred_read_window_size].
     mem_limiter: Arc<MemoryLimiter<Client>>,
+    increment_heuristic: BackpressureIncrementHeuristic,
+}
+
+#[derive(Debug, Default)]
+enum BackpressureIncrementHeuristic {
+    /// The [BackpressureController] will wait until at least half of its current read window has been consumed
+    /// before sending a read increment via its corresponding [BackpressureLimiter].
+    AfterHalfConsumed,
+    /// Backpressure is incremented directly by the values provided in [BackpressureController::send_feedback],
+    /// which is typically the way the value was read by the consumer.
+    #[default]
+    Linear,
+}
+
+impl BackpressureIncrementHeuristic {
+    /// Determines the heuristic used by [BackpressureController] to manage a read ahead window.
+    ///
+    /// Panics when finding an unexpected value for the environment variable.
+    fn from_env() -> Self {
+        match std::env::var("UNSTABLE_MOUNTPOINT_BACKPRESSURE_INC_HEURISTIC")
+            .as_ref()
+            .map(|string| string.as_str())
+        {
+            Err(std::env::VarError::NotPresent) => BackpressureIncrementHeuristic::default(),
+            Ok("LINEAR_READSIZE") => BackpressureIncrementHeuristic::Linear,
+            Ok("HALF_CONSUMED") => BackpressureIncrementHeuristic::AfterHalfConsumed,
+            Ok(_) | Err(_) => panic!("unexpected value for UNSTABLE_MOUNTPOINT_BACKPRESSURE_INC_HEURISTIC, oh no!"),
+        }
+    }
 }
 
 /// The [BackpressureLimiter] is used on producer side of a stream, for example,
@@ -103,6 +132,7 @@ pub fn new_backpressure_controller<Client: ObjectClient>(
         next_read_offset: config.request_range.start,
         request_end_offset: config.request_range.end,
         mem_limiter,
+        increment_heuristic: BackpressureIncrementHeuristic::from_env(),
     };
 
     let limiter = BackpressureLimiter {
@@ -128,31 +158,75 @@ impl<Client: ObjectClient> BackpressureController<Client> {
                 self.next_read_offset = offset + length as u64;
                 self.mem_limiter.release(BufferArea::Prefetch, length as u64);
 
-                loop {
-                    let new_read_window_end_offset = self
-                        .next_read_offset
-                        .saturating_add(self.preferred_read_window_size as u64)
-                        .min(self.request_end_offset);
-                    let to_increase = new_read_window_end_offset.saturating_sub(self.read_window_end_offset) as usize;
+                match &self.increment_heuristic {
+                    BackpressureIncrementHeuristic::Linear => {
+                        loop {
+                            let new_read_window_end_offset = self
+                                .next_read_offset
+                                .saturating_add(self.preferred_read_window_size as u64)
+                                .min(self.request_end_offset);
+                            let to_increase =
+                                new_read_window_end_offset.saturating_sub(self.read_window_end_offset) as usize;
 
-                    if to_increase == 0 {
-                        // There's nothing to increment, just accept the feedback.
-                        // This can happen with random read patterns or prefetcher scale down.
-                        break;
+                            if to_increase == 0 {
+                                // There's nothing to increment, just accept the feedback.
+                                // This can happen with random read patterns or prefetcher scale down.
+                                break;
+                            }
+
+                            // Force incrementing window regardless of available memory when at minimum window size.
+                            if self.preferred_read_window_size <= self.min_read_window_size {
+                                self.mem_limiter.reserve(BufferArea::Prefetch, to_increase as u64);
+                                self.increment_read_window(to_increase).await;
+                                break;
+                            } else {
+                                // Try to reserve memory and inc. read window, otherwise scale down and try again.
+                                if self.mem_limiter.try_reserve(BufferArea::Prefetch, to_increase as u64) {
+                                    self.increment_read_window(to_increase).await;
+                                    break;
+                                } else {
+                                    self.scale_down();
+                                }
+                            }
+                        }
                     }
+                    BackpressureIncrementHeuristic::AfterHalfConsumed => {
+                        // Increment the read window only if the remaining window reaches some threshold i.e. half of it left.
+                        // When memory is low the `preferred_read_window_size` will be scaled down so we have to keep trying
+                        // until we have enough read window.
+                        let remaining_window =
+                            self.read_window_end_offset.saturating_sub(self.next_read_offset) as usize;
+                        while remaining_window < (self.preferred_read_window_size / 2)
+                            && self.read_window_end_offset < self.request_end_offset
+                        {
+                            let new_read_window_end_offset = self
+                                .next_read_offset
+                                .saturating_add(self.preferred_read_window_size as u64)
+                                .min(self.request_end_offset);
+                            // We can skip if the new `read_window_end_offset` is less than or equal to the current one, this
+                            // could happen after the read window is scaled down.
+                            if new_read_window_end_offset <= self.read_window_end_offset {
+                                break;
+                            }
+                            let to_increase =
+                                new_read_window_end_offset.saturating_sub(self.read_window_end_offset) as usize;
 
-                    // Force incrementing window regardless of available memory when at minimum window size.
-                    if self.preferred_read_window_size <= self.min_read_window_size {
-                        self.mem_limiter.reserve(BufferArea::Prefetch, to_increase as u64);
-                        self.increment_read_window(to_increase).await;
-                        break;
-                    } else {
-                        // Try to reserve memory and inc. read window, otherwise scale down and try again.
-                        if self.mem_limiter.try_reserve(BufferArea::Prefetch, to_increase as u64) {
-                            self.increment_read_window(to_increase).await;
-                            break;
-                        } else {
-                            self.scale_down();
+                            // Force incrementing read window regardless of available memory when we are already at minimum
+                            // read window size.
+                            if self.preferred_read_window_size <= self.min_read_window_size {
+                                self.mem_limiter.reserve(BufferArea::Prefetch, to_increase as u64);
+                                self.increment_read_window(to_increase).await;
+                                break;
+                            }
+
+                            // Try to reserve the memory for the length we want to increase before sending the request,
+                            // scale down the read window if it fails.
+                            if self.mem_limiter.try_reserve(BufferArea::Prefetch, to_increase as u64) {
+                                self.increment_read_window(to_increase).await;
+                                break;
+                            } else {
+                                self.scale_down();
+                            }
                         }
                     }
                 }
