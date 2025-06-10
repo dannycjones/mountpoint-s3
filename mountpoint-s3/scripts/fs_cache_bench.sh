@@ -47,7 +47,7 @@ cd ${project_dir}
 results_dir=results
 runtime_seconds=30
 startdelay_seconds=30
-iterations=10
+iterations=${S3_BENCH_ITERATIONS:-10}
 
 rm -rf ${results_dir}
 mkdir -p ${results_dir}
@@ -131,7 +131,7 @@ cache_benchmark () {
     sudo chown -R $current_user_id $local_storage
     echo "mounted local file system at $local_storage"
   else
-    local_storage=/tmp
+    local_storage=/localstorage # HACK, use it anyway, i already set it up.
   fi
 
   for job_file in "${jobs_dir}"/*.fio; do
@@ -155,13 +155,11 @@ cache_benchmark () {
       # unmount file system only if it is mounted
       ! mountpoint -q ${mount_dir} || sudo umount ${mount_dir}
       rm -rf ${mount_dir}
-      rm -rf ${log_dir}
     }
 
     # trap cleanup on exit
     trap 'cleanup' EXIT
 
-    rm -rf ${log_dir}
     mkdir -p ${log_dir}
 
     # mount file system
