@@ -4,6 +4,7 @@ use std::fs;
 use std::io::{ErrorKind, Read, Write};
 use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::Instant;
 
 use async_trait::async_trait;
@@ -17,6 +18,7 @@ use sha2::{Digest, Sha256};
 use thiserror::Error;
 use tracing::{trace, warn};
 
+use crate::buffer_pool::{self, LeasedBytesMut};
 use crate::checksums::IntegrityError;
 use crate::data_cache::DataCacheError;
 use crate::object::ObjectId;
@@ -35,6 +37,7 @@ pub struct DiskDataCache {
     config: DiskDataCacheConfig,
     /// Tracks blocks usage. `None` when no cache limit was set.
     usage: Option<Mutex<UsageInfo<DiskBlockKey>>>,
+    buffer_pool: Arc<buffer_pool::BufferPool>,
 }
 
 /// Configuration for a [DiskDataCache].
@@ -245,20 +248,33 @@ impl DiskBlock {
     }
 
     /// Deserialize an instance from `reader`.
-    fn read(reader: &mut impl Read, block_size: u64) -> Result<Self, DiskBlockReadWriteError> {
+    fn read(
+        reader: &mut impl Read,
+        mut data_buffer: LeasedBytesMut,
+        block_size: u64,
+    ) -> Result<Self, DiskBlockReadWriteError> {
         let header: DiskBlockHeader = bincode::decode_from_std_read(reader, BINCODE_CONFIG)?;
 
         if header.block_len > block_size {
             return Err(DiskBlockReadWriteError::InvalidBlockLength(header.block_len));
         }
 
-        let mut buffer = vec![0u8; header.block_len as usize];
-        reader.read_exact(&mut buffer)?;
+        let data = {
+            let mut bytes_mut = data_buffer.bytes_mut();
+            assert!(
+                bytes_mut.capacity() >= block_size as usize,
+                "buffer to read bytes into must be equal or larger to block size"
+            );
+            // SAFETY: We know the buffer is long enough, and we're going to initialize the data immediately after.
+            unsafe {
+                bytes_mut.set_len(block_size as usize);
+            }
+            reader.read_exact(&mut bytes_mut)?;
 
-        Ok(Self {
-            header,
-            data: buffer.into(),
-        })
+            data_buffer.into_bytes()
+        };
+
+        Ok(Self { header, data })
     }
 
     /// Serialize this instance to `writer` and return the number of bytes written on success.
@@ -309,7 +325,12 @@ impl DiskDataCache {
             CacheLimit::Unbounded => None,
             CacheLimit::TotalSize { .. } | CacheLimit::AvailableSpace { .. } => Some(Mutex::new(UsageInfo::new())),
         };
-        DiskDataCache { config, usage }
+        let buffer_pool = crate::buffer_pool::new_unbounded_buffer_pool(1024 * 1024);
+        DiskDataCache {
+            config,
+            usage,
+            buffer_pool,
+        }
     }
 
     /// Get the relative path for the given block.
@@ -348,7 +369,8 @@ impl DiskDataCache {
             return Err(DataCacheError::InvalidBlockContent);
         }
 
-        let block = DiskBlock::read(&mut file, self.block_size())
+        let buffer = self.buffer_pool.get_buffer();
+        let block = DiskBlock::read(&mut file, buffer, self.block_size())
             .inspect_err(|e| warn!(path = ?path.as_ref(), "block could not be deserialized: {:?}", e))?;
         let bytes = block
             .data(cache_key, block_idx, block_offset)

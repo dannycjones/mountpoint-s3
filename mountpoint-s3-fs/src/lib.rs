@@ -1,5 +1,6 @@
 mod async_util;
 pub mod autoconfigure;
+mod buffer_pool;
 mod checksums;
 mod config;
 pub mod data_cache;

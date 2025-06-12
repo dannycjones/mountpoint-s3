@@ -196,6 +196,7 @@ cache_benchmark () {
     fi
     # report disk usage
     df -hT
+
     # run the benchmark
     run_fio_job $job_file $bench_file $mount_dir $log_dir
 
