@@ -1,6 +1,17 @@
+---
 version: 2
 updates:
-- package-ecosystem: "github-actions"
-  directory: "/"
-  schedule:
-    interval: "weekly"
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+  - package-ecosystem: "uv"
+    directory: "benchmark"
+    schedule:
+      interval: "quarterly"
+    # ensure updates are batched into one PR
+    groups:
+      benchmark-uv-dependencies:
+        patterns:
+          - "*"
+
