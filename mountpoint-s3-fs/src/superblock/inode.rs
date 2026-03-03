@@ -297,6 +297,16 @@ pub enum WriteStatus {
     LocalUnopened,
     /// Local inode currently opened for writing
     LocalOpenForWriting,
+    /// Local directory created via mkdir - persists until explicit rmdir.
+    ///
+    /// LocalDirectory semantics:
+    /// - Persists even after all files within are uploaded to S3
+    /// - Takes precedence over remote directories with the same name
+    /// - All ancestor directories are also marked as LocalDirectory
+    /// - Can contain both local and remote children
+    /// - Only removed by explicit rmdir (which fails if directory has any children)
+    /// - Never garbage collected when kernel forgets the inode
+    LocalDirectory,
     /// Remote inode - already exists in S3 with internal state in sync with the S3 state
     Remote,
     /// Originally remote inode now pending a rename (as the source or destination)

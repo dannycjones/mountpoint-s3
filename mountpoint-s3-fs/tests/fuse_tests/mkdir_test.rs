@@ -36,10 +36,20 @@ fn mkdir_remote_after_file_create_test(creator_fn: impl TestSessionCreator, pref
         .remove_object(&format!("{dirname}/{filename}"))
         .unwrap();
 
-    // Verify that the directory disappeared
+    // LocalDirectory persists even after files are removed
     let read_dir_iter = fs::read_dir(test_session.mount_path()).unwrap();
     let dir_entry_names = read_dir_to_entry_names(read_dir_iter);
-    assert_eq!(dir_entry_names, Vec::<String>::new());
+    assert_eq!(
+        dir_entry_names,
+        vec![dirname.to_string()],
+        "LocalDirectory should persist"
+    );
+
+    // Verify the directory still exists
+    assert!(
+        Path::exists(&dirpath),
+        "directory should still exist after file removal"
+    );
 }
 
 #[cfg(feature = "s3_tests")]

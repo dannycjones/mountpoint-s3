@@ -44,7 +44,7 @@
 use std::collections::VecDeque;
 use std::ffi::OsString;
 
-use super::{InodeKindData, LookedUpInode, RemoteLookup, SuperblockInner};
+use super::{InodeKindData, LookedUpInode, RemoteLookup, SuperblockInner, WriteStatus};
 use crate::metablock::{InodeError, InodeKind, InodeNo, InodeStat};
 use crate::superblock::ValidName;
 use crate::sync::atomic::{AtomicI64, Ordering};
@@ -73,34 +73,56 @@ impl ReaddirHandle {
     ) -> Result<Self, InodeError> {
         let local_entries = {
             let inode = inner.get(dir_ino)?;
-            let kind_data = &inode.get_inode_state()?.kind_data;
-            let local_files = match kind_data {
+            let inode_state = inode.get_inode_state()?;
+            let kind_data = &inode_state.kind_data;
+            match kind_data {
                 InodeKindData::File { .. } => return Err(InodeError::NotADirectory(inode.err())),
-                InodeKindData::Directory { writing_children, .. } => writing_children.iter().map(|ino| {
-                    let inode = inner.get(*ino)?;
-                    let locked_inode = inode.get_inode_state()?;
-                    let stat = locked_inode.stat.clone();
-                    let write_status = locked_inode.write_status;
-                    drop(locked_inode);
-                    Ok(ReaddirEntry::LocalInode {
-                        lookup: LookedUpInode {
-                            inode,
-                            stat,
-                            path: inner.s3_path.clone(),
-                            write_status,
-                        },
-                    })
-                }),
-            };
+                InodeKindData::Directory {
+                    writing_children,
+                    children,
+                    ..
+                } => {
+                    // Collect both writing_children and LocalDirectory children
+                    let mut all_local_inos = writing_children.iter().copied().collect::<Vec<_>>();
 
-            match local_files.collect::<Result<Vec<_>, _>>() {
-                Ok(mut new_results) => {
-                    new_results.sort();
-                    new_results
-                }
-                Err(e) => {
-                    error!(error=?e, "readdir failed listing local files");
-                    return Err(e);
+                    // Add LocalDirectory children that aren't already in writing_children
+                    for child_inode in children.values() {
+                        if let Ok(child_state) = child_inode.get_inode_state()
+                            && child_state.write_status == WriteStatus::LocalDirectory
+                            && !writing_children.contains(&child_inode.ino())
+                        {
+                            all_local_inos.push(child_inode.ino());
+                        }
+                    }
+
+                    drop(inode_state);
+
+                    let local_files = all_local_inos.iter().map(|ino| {
+                        let inode = inner.get(*ino)?;
+                        let locked_inode = inode.get_inode_state()?;
+                        let stat = locked_inode.stat.clone();
+                        let write_status = locked_inode.write_status;
+                        drop(locked_inode);
+                        Ok(ReaddirEntry::LocalInode {
+                            lookup: LookedUpInode {
+                                inode,
+                                stat,
+                                path: inner.s3_path.clone(),
+                                write_status,
+                            },
+                        })
+                    });
+
+                    match local_files.collect::<Result<Vec<_>, _>>() {
+                        Ok(mut new_results) => {
+                            new_results.sort();
+                            new_results
+                        }
+                        Err(e) => {
+                            error!(error=?e, "readdir failed listing local files");
+                            return Err(e);
+                        }
+                    }
                 }
             }
         };
@@ -656,9 +678,9 @@ mod tests {
     use mountpoint_s3_client::mock_client::MockClient;
 
     /// Verifies that `readdir` gracefully skips local inodes that are no longer tracked
-    /// in the parent’s `writing_children`.  
+    /// in the parent’s `writing_children`.
     /// Creates a file, obtains a readdir handle, finishes writing the file (removing it
-    /// from `writing_children`), then uses the handle.  
+    /// from `writing_children`), then uses the handle.
     /// The test passes if `readdir` completes successfully without panicking, even if the
     /// entry is not returned.
     #[tokio::test]

@@ -39,23 +39,22 @@ fn rmdir_local_dir_test(creator_fn: impl TestSessionCreator, prefix: &str) {
 
     let err =
         fs::remove_dir(&non_empty_dirpath).expect_err("removing non-empty directory should fail even after closing");
-    assert_eq!(
-        err.raw_os_error(),
-        Some(libc::EPERM),
-        "After the file is closed, we expect the directory to become remote"
-    );
+    assert_eq!(err.raw_os_error(), Some(libc::ENOTEMPTY), "directory is not empty",);
 
-    // readdir should now show that the empty directory is deleted
+    // readdir should still show that the empty directory is deleted
     let mut read_dir_iter = fs::read_dir(&main_path).unwrap();
     let mut dir_entry_names = read_dir_to_entry_names(read_dir_iter);
     assert_eq!(dir_entry_names, vec![non_empty_dirname]);
 
-    // should not be able to remove the deleted directory
-    let err = fs::remove_dir(&empty_dirpath).expect_err("directory remove should not work on deleted directory");
+    // rmdir on already-removed directory should fail with ENOENT
+    let err = fs::remove_dir(&empty_dirpath).expect_err("removing already-deleted directory should fail");
     assert_eq!(err.raw_os_error(), Some(libc::ENOENT));
 
     // testing to re-create the removed directory
-    DirBuilder::new().recursive(true).create(&empty_dirpath).unwrap();
+    DirBuilder::new()
+        .recursive(true)
+        .create(&empty_dirpath)
+        .expect("directory recreation should succeed");
     read_dir_iter = fs::read_dir(&main_path).unwrap();
     dir_entry_names = read_dir_to_entry_names(read_dir_iter);
     assert_eq!(dir_entry_names, vec![empty_dirname, non_empty_dirname]);

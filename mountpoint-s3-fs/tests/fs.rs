@@ -1005,9 +1005,179 @@ async fn test_local_dir(prefix: &str) {
     // Remove the new object from the client
     client.remove_object(&format!("{prefix}{dirname}/{filename}"));
 
-    // Verify that the directory disappeared
+    // LocalDirectory persists even after files are removed
     let lookup = fs.lookup(FUSE_ROOT_INODE, dirname.as_ref()).await;
-    assert!(matches!(lookup, Err(e) if e.to_errno() == libc::ENOENT));
+    assert!(lookup.is_ok(), "LocalDirectory should persist after file removal");
+}
+
+#[test_case(""; "unprefixed")]
+#[test_case("test_prefix/"; "prefixed")]
+#[tokio::test]
+async fn test_local_directory_merges_local_and_remote_children(prefix: &str) {
+    let prefix = Prefix::new(prefix).expect("valid prefix");
+    let (client, fs) = make_test_filesystem("test_local_dir_merge", &prefix, Default::default());
+
+    // Create local directory
+    let dirname = "mydir";
+    let dir_entry = fs
+        .mkdir(FUSE_ROOT_INODE, dirname.as_ref(), libc::S_IFDIR, 0)
+        .await
+        .unwrap();
+    let dir_ino = dir_entry.attr.ino;
+
+    // Add a local file to the directory
+    let local_filename = "local_file.txt";
+    let mode = libc::S_IFREG | libc::S_IRWXU;
+    let local_file = fs.mknod(dir_ino, local_filename.as_ref(), mode, 0, 0).await.unwrap();
+    let local_fh = fs.open(local_file.attr.ino, OpenFlags::O_WRONLY, 0).await.unwrap().fh;
+    fs.release(local_file.attr.ino, local_fh, 0, None, false).await.unwrap();
+
+    // Add remote objects to the same directory
+    client.add_object(&format!("{prefix}{dirname}/remote_file1.txt"), b"remote1".into());
+    client.add_object(&format!("{prefix}{dirname}/remote_file2.txt"), b"remote2".into());
+
+    // Add another local file
+    let local_filename2 = "local_file2.txt";
+    let local_file2 = fs.mknod(dir_ino, local_filename2.as_ref(), mode, 0, 0).await.unwrap();
+    let local_fh2 = fs.open(local_file2.attr.ino, OpenFlags::O_WRONLY, 0).await.unwrap().fh;
+    fs.release(local_file2.attr.ino, local_fh2, 0, None, false)
+        .await
+        .unwrap();
+
+    // Read directory and verify all children are present
+    let dir_handle = fs.opendir(dir_ino, 0).await.unwrap().fh;
+    let mut reply = Default::default();
+    fs.readdir(dir_ino, dir_handle, 0, &mut reply).await.unwrap();
+    fs.releasedir(dir_ino, dir_handle, 0).await.unwrap();
+
+    // Collect all entry names (excluding . and ..)
+    let entries: Vec<String> = reply
+        .entries
+        .iter()
+        .filter(|e| e.name != "." && e.name != "..")
+        .map(|e| e.name.to_string_lossy().to_string())
+        .collect();
+
+    // Verify all 4 files are present
+    assert_eq!(entries.len(), 4, "Should have 4 children: 2 local + 2 remote");
+    assert!(entries.contains(&"local_file.txt".to_string()));
+    assert!(entries.contains(&"local_file2.txt".to_string()));
+    assert!(entries.contains(&"remote_file1.txt".to_string()));
+    assert!(entries.contains(&"remote_file2.txt".to_string()));
+
+    // Verify we can lookup each file
+    for filename in &[
+        "local_file.txt",
+        "local_file2.txt",
+        "remote_file1.txt",
+        "remote_file2.txt",
+    ] {
+        let lookup = fs.lookup(dir_ino, filename.as_ref()).await;
+        assert!(lookup.is_ok(), "Should be able to lookup {}", filename);
+    }
+}
+
+#[test_case(""; "unprefixed")]
+#[test_case("test_prefix/"; "prefixed")]
+#[tokio::test]
+async fn test_mkdir_visible_in_readdir(prefix: &str) {
+    let prefix = Prefix::new(prefix).expect("valid prefix");
+    let (client, fs) = make_test_filesystem("test_mkdir_readdir", &prefix, Default::default());
+
+    // Create a local directory
+    let dirname = "mydir";
+    let dir_entry = fs
+        .mkdir(FUSE_ROOT_INODE, dirname.as_ref(), libc::S_IFDIR, 0)
+        .await
+        .unwrap();
+    let dir_ino = dir_entry.attr.ino;
+
+    // Verify directory is not in S3
+    assert!(!client.contains_prefix(&format!("{prefix}{dirname}")));
+
+    // Read parent directory and verify the new directory is visible
+    let dir_handle = fs.opendir(FUSE_ROOT_INODE, 0).await.unwrap().fh;
+    let mut reply = Default::default();
+    fs.readdir(FUSE_ROOT_INODE, dir_handle, 0, &mut reply).await.unwrap();
+    fs.releasedir(FUSE_ROOT_INODE, dir_handle, 0).await.unwrap();
+
+    // Collect all entry names (excluding . and ..)
+    let entries: Vec<String> = reply
+        .entries
+        .iter()
+        .filter(|e| e.name != "." && e.name != "..")
+        .map(|e| e.name.to_string_lossy().to_string())
+        .collect();
+
+    // Verify the directory is visible
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0], dirname);
+
+    // Verify we can lookup the directory
+    let lookup = fs.lookup(FUSE_ROOT_INODE, dirname.as_ref()).await.unwrap();
+    assert_eq!(lookup.attr.ino, dir_ino);
+    assert_eq!(lookup.attr.kind, FileType::Directory);
+}
+
+#[test_case(""; "unprefixed")]
+#[test_case("test_prefix/"; "prefixed")]
+#[tokio::test]
+async fn test_mkdir_persists_after_file_unlink(prefix: &str) {
+    let prefix = Prefix::new(prefix).expect("valid prefix");
+    let config = S3FilesystemConfig {
+        allow_delete: true,
+        ..Default::default()
+    };
+    let (client, fs) = make_test_filesystem("test_mkdir_persist", &prefix, config);
+
+    // Create a local directory
+    let dirname = "mydir";
+    let dir_entry = fs
+        .mkdir(FUSE_ROOT_INODE, dirname.as_ref(), libc::S_IFDIR, 0)
+        .await
+        .unwrap();
+    let dir_ino = dir_entry.attr.ino;
+
+    // Create a file in the directory
+    let filename = "file.txt";
+    let mode = libc::S_IFREG | libc::S_IRWXU;
+    let file_entry = fs.mknod(dir_ino, filename.as_ref(), mode, 0, 0).await.unwrap();
+    let file_ino = file_entry.attr.ino;
+
+    // Open and close the file to upload it
+    let fh = fs.open(file_ino, OpenFlags::O_WRONLY, 0).await.unwrap().fh;
+    fs.release(file_ino, fh, 0, None, false).await.unwrap();
+
+    // Verify file exists in S3
+    assert!(client.contains_key(&format!("{prefix}{dirname}/{filename}")));
+
+    // Unlink the file
+    fs.unlink(dir_ino, filename.as_ref()).await.unwrap();
+
+    // Remove from client to simulate deletion
+    client.remove_object(&format!("{prefix}{dirname}/{filename}"));
+
+    // Verify directory still exists via lookup
+    let lookup = fs.lookup(FUSE_ROOT_INODE, dirname.as_ref()).await;
+    assert!(lookup.is_ok(), "Directory should persist after file is unlinked");
+    let lookup = lookup.unwrap();
+    assert_eq!(lookup.attr.ino, dir_ino);
+    assert_eq!(lookup.attr.kind, FileType::Directory);
+
+    // Verify directory is empty
+    let dir_handle = fs.opendir(dir_ino, 0).await.unwrap().fh;
+    let mut reply = Default::default();
+    fs.readdir(dir_ino, dir_handle, 0, &mut reply).await.unwrap();
+    fs.releasedir(dir_ino, dir_handle, 0).await.unwrap();
+
+    let child_entries: Vec<String> = reply
+        .entries
+        .iter()
+        .filter(|e| e.name != "." && e.name != "..")
+        .map(|e| e.name.to_string_lossy().to_string())
+        .collect();
+
+    assert_eq!(child_entries.len(), 0, "Directory should be empty after file unlink");
 }
 
 #[tokio::test]

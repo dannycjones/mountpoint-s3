@@ -491,7 +491,6 @@ impl Harness {
 
         let inflight_write = self.inflight_writes.remove(index);
         self.reference.remove_local_file(&inflight_write.path);
-        self.reference.remove_local_parents(&inflight_write.path);
         self.reference
             .add_remote_file(inflight_write.path, inflight_write.object);
     }
@@ -624,8 +623,6 @@ impl Harness {
         let object = contents.to_mock_object();
         self.client.add_object(&key, object.clone());
         self.reference.add_remote_key(&key, object);
-        // Any local directories along the path are made remote by adding this object
-        self.reference.remove_local_parents(key_as_path);
     }
 
     /// Perform a DeleteObject on the bucket, to simulate concurrent access to the bucket by a
@@ -1380,6 +1377,71 @@ mod mutations {
                     Name("a/b".into()),
                     FileContent(0, FileSize::Small(0)),
                 ),
+            ],
+            0,
+        )
+    }
+
+    /*
+     Test that LocalDirectory merges local and remote children.
+     Creates a local directory, adds both local files and remote objects to it,
+     and verifies readdir shows both.
+    */
+    #[test]
+    fn test_local_directory_merges_children() {
+        run_test(
+            TreeNode::Directory(BTreeMap::from([])),
+            vec![
+                // Create local directory "dir"
+                Op::CreateDirectory(DirectoryIndex(0), "dir".into()),
+                // Add a local file to it
+                Op::CreateFile(
+                    ValidName("local_file".into()),
+                    DirectoryIndex(1),
+                    FileContent(0, FileSize::Small(100)),
+                ),
+                // Add remote objects to the same directory
+                Op::PutObject(
+                    DirectoryIndex(1),
+                    Name("remote_file1".into()),
+                    FileContent(1, FileSize::Small(200)),
+                ),
+                Op::PutObject(
+                    DirectoryIndex(1),
+                    Name("remote_file2".into()),
+                    FileContent(2, FileSize::Small(250)),
+                ),
+                // Add another local file
+                Op::CreateFile(
+                    ValidName("local_file2".into()),
+                    DirectoryIndex(1),
+                    FileContent(3, FileSize::Small(150)),
+                ),
+            ],
+            0,
+        )
+    }
+
+    /*
+     Test that LocalDirectory persists after creating and unlinking a file.
+     This verifies the directory remains visible even when empty.
+    */
+    #[test]
+    fn test_local_directory_persists_after_unlink() {
+        run_test(
+            TreeNode::Directory(BTreeMap::from([])),
+            vec![
+                // Create local directory
+                Op::CreateDirectory(DirectoryIndex(0), "dir".into()),
+                // Create a file in it
+                Op::CreateFile(
+                    ValidName("file".into()),
+                    DirectoryIndex(1),
+                    FileContent(0, FileSize::Small(100)),
+                ),
+                // Unlink the file
+                Op::UnlinkFile(DirectoryIndex(1), ChildIndex(0)),
+                // Directory should still exist (verified by compare_contents)
             ],
             0,
         )

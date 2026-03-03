@@ -264,20 +264,6 @@ impl Reference {
         self.materialized = self.rematerialize();
     }
 
-    /// When a file is made remote, all its parent directories implicitly become remote too. This
-    /// method removes those parents from the local directories list if they exist.
-    pub fn remove_local_parents(&mut self, path: impl AsRef<Path>) {
-        let Some(parent) = path.as_ref().parent() else {
-            // `/` is a valid key (so could be used by PutObject) but not a valid filename
-            assert_eq!(path.as_ref(), Path::new("/"));
-            return;
-        };
-        // [Path::starts_with] only considers whole path components, so this won't remove a local
-        // directory `a` if a sibling `ab` became remote, even though "ab" starts with "a".
-        self.local_directories.retain(|dir| !parent.starts_with(dir));
-        self.materialized = self.rematerialize();
-    }
-
     pub fn add_remote_key(&mut self, key: &str, object: MockObject) {
         self.remote_objects.insert(key.to_owned(), object);
         self.materialized = self.rematerialize();

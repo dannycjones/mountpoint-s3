@@ -137,7 +137,10 @@ impl<'a> PendingRenameGuard<'a> {
     fn try_transition(inode: &'a Inode) -> Result<Self, InodeError> {
         let mut locked = inode.get_mut_inode_state()?;
         match locked.write_status {
-            WriteStatus::LocalUnopened | WriteStatus::LocalOpenForWriting | WriteStatus::PendingRename => {
+            WriteStatus::LocalUnopened
+            | WriteStatus::LocalOpenForWriting
+            | WriteStatus::LocalDirectory
+            | WriteStatus::PendingRename => {
                 return Err(InodeError::RenameNotPermittedWhileWriting(inode.err()));
             }
             WriteStatus::Remote => {} // All OK.
@@ -354,7 +357,9 @@ impl<OC: ObjectClient + Send + Sync> Superblock<OC> {
         fh: u64,
     ) -> Result<Option<PendingUploadHook>, InodeError> {
         match locked_inode.write_status {
-            WriteStatus::LocalUnopened => Err(InodeError::InodeNotReadableWhileWriting(inode.err())),
+            WriteStatus::LocalUnopened | WriteStatus::LocalDirectory => {
+                Err(InodeError::InodeNotReadableWhileWriting(inode.err()))
+            }
             WriteStatus::LocalOpenForWriting | WriteStatus::PendingRename | WriteStatus::Remote => {
                 if !self.inner.open_handles.try_add_reader(locked_inode, fh) {
                     return Err(InodeError::InodeNotReadableWhileWriting(inode.err()));
@@ -395,7 +400,9 @@ impl<OC: ObjectClient + Send + Sync> Superblock<OC> {
                 locked_inode.stat.size = 0;
                 Ok(None)
             }
-            WriteStatus::PendingRename => Err(InodeError::InodeAlreadyWriting(inode.err())),
+            WriteStatus::LocalDirectory | WriteStatus::PendingRename => {
+                Err(InodeError::InodeAlreadyWriting(inode.err()))
+            }
             WriteStatus::LocalOpenForWriting | WriteStatus::Remote => {
                 if !mode.is_inode_writable(is_truncate) {
                     return Err(InodeError::InodeNotWritable(inode.err()));
@@ -639,18 +646,21 @@ impl<OC: ObjectClient + Send + Sync + Clone> Metablock for Superblock<OC> {
         let mut inode_state = inode.get_mut_inode_state()?;
 
         match &inode_state.write_status {
-            WriteStatus::LocalOpenForWriting => unreachable!("A directory cannot be in LocalOpenForWriting state"),
+            WriteStatus::LocalOpenForWriting | WriteStatus::LocalUnopened => {
+                unreachable!("A directory cannot be in local open or unopened state")
+            }
             WriteStatus::Remote => {
                 return Err(InodeError::CannotRemoveRemoteDirectory(inode.err()));
             }
-            WriteStatus::LocalUnopened => match &mut inode_state.kind_data {
+            WriteStatus::LocalDirectory => match &mut inode_state.kind_data {
                 InodeKindData::File {} => unreachable!("Already checked that inode is a directory"),
                 InodeKindData::Directory {
                     writing_children,
+                    children,
                     deleted,
                     ..
                 } => {
-                    if !writing_children.is_empty() {
+                    if !writing_children.is_empty() || !children.is_empty() {
                         return Err(InodeError::DirectoryNotEmpty(inode.err()));
                     }
                     *deleted = true;
@@ -701,6 +711,7 @@ impl<OC: ObjectClient + Send + Sync + Clone> Metablock for Superblock<OC> {
         };
 
         match write_status {
+            WriteStatus::LocalDirectory => unreachable!("we know its not a directory"),
             WriteStatus::LocalUnopened | WriteStatus::LocalOpenForWriting | WriteStatus::PendingRename => {
                 // In the future, we may permit `unlink` and cancel any in-flight uploads.
                 warn!(
@@ -958,6 +969,7 @@ impl<OC: ObjectClient + Send + Sync + Clone> Metablock for Superblock<OC> {
 
                 // Walk up the ancestors from parent to first remote ancestor to transition
                 // the inode and all "local" containing directories to "remote".
+                // However, LocalDirectory ancestors should remain LocalDirectory.
                 let children_inos = std::iter::once(inode.ino()).chain(ancestors.iter().map(|ancestor| ancestor.ino()));
                 for (ancestor_state, child_ino) in ancestors_states.iter_mut().rev().zip(children_inos) {
                     match &mut ancestor_state.kind_data {
@@ -966,7 +978,10 @@ impl<OC: ObjectClient + Send + Sync + Clone> Metablock for Superblock<OC> {
                             writing_children.remove(&child_ino);
                         }
                     }
-                    ancestor_state.write_status = WriteStatus::Remote;
+                    // Only transition to Remote if not already LocalDirectory
+                    if ancestor_state.write_status != WriteStatus::LocalDirectory {
+                        ancestor_state.write_status = WriteStatus::Remote;
+                    }
                 }
 
                 let stat = locked_inode.stat.clone();
@@ -1274,11 +1289,21 @@ impl<OC: ObjectClient + Send + Sync + Clone> Metablock for Superblock<OC> {
                 }
             };
 
-            let write_status = WriteStatus::LocalUnopened;
+            let write_status = match kind {
+                InodeKind::File => WriteStatus::LocalUnopened,
+                InodeKind::Directory => WriteStatus::LocalDirectory,
+            };
             let state = InodeState::new(&stat, kind, write_status);
             let inode = self
                 .inner
                 .create_inode_locked(&parent_inode, &mut parent_state, name, kind, state, true)?;
+
+            // For directories, mark all ancestors as LocalDirectory
+            if kind == InodeKind::Directory {
+                drop(parent_state);
+                self.inner.mark_ancestors_as_local_directory(&parent_inode)?;
+            }
+
             let lookup = Lookup::new(
                 inode.ino(),
                 stat,
@@ -1456,7 +1481,8 @@ impl<OC: ObjectClient + Send + Sync> SuperblockInner<OC> {
                 InodeKindData::Directory { children, .. } => {
                     if let Some(inode) = children.get(name) {
                         let locked = inode.get_inode_state().ok()?;
-                        if locked.stat.is_valid() {
+                        // LocalDirectory inodes are always valid in cache
+                        if locked.write_status == WriteStatus::LocalDirectory || locked.stat.is_valid() {
                             let lookup = LookedUpInode {
                                 inode: inode.clone(),
                                 stat: locked.stat.clone(),
@@ -1734,6 +1760,28 @@ impl<OC: ObjectClient + Send + Sync> SuperblockInner<OC> {
                         write_status,
                     })
                 } else {
+                    // Check if this is a LocalDirectory - they persist even when not in writing_children
+                    let is_local_directory = {
+                        let existing_state = existing_inode.get_inode_state()?;
+                        existing_state.write_status == WriteStatus::LocalDirectory
+                    };
+
+                    if is_local_directory {
+                        let validity = self.config.cache_config.dir_ttl;
+                        let mut sync = existing_inode.get_mut_inode_state()?;
+                        sync.stat.update_validity(validity);
+                        let stat = sync.stat.clone();
+                        let write_status = sync.write_status;
+                        drop(sync);
+
+                        return Ok(LookedUpInode {
+                            inode: existing_inode,
+                            stat,
+                            path: self.s3_path.clone(),
+                            write_status,
+                        });
+                    }
+
                     // This existing inode is local-only (because `remote` is None), but is not
                     // being written. It must have previously existed but been removed on the remote
                     // side.
@@ -1776,6 +1824,23 @@ impl<OC: ObjectClient + Send + Sync> SuperblockInner<OC> {
                 // updating the parent.
                 let same_kind = remote.kind == existing_inode.kind();
                 let same_etag = existing_state.stat.etag == remote.stat.etag;
+                let is_local_directory = existing_state.write_status == WriteStatus::LocalDirectory;
+
+                // LocalDirectory takes precedence over remote directories to ensure directories
+                // created via mkdir persist until explicit rmdir. This means:
+                // - Local directory structure is preserved even if remote objects appear
+                // - Children of LocalDirectory include both local and remote content
+                // - rmdir will fail if directory has any children (local or remote)
+                if is_local_directory {
+                    existing_state.stat.update_validity(self.config.cache_config.dir_ttl);
+                    return Ok(LookedUpInode {
+                        inode: existing_inode.clone(),
+                        stat: existing_state.stat.clone(),
+                        path: self.s3_path.clone(),
+                        write_status: existing_state.write_status,
+                    });
+                }
+
                 if same_kind && same_etag && (existing_is_remote || remote.kind == InodeKind::Directory) {
                     trace!(parent=?existing_inode.parent(), name=?existing_inode.name(), ino=?existing_inode.ino(), "updating inode in place (slow path)");
                     existing_state.stat = remote.stat.clone();
@@ -1869,6 +1934,27 @@ impl<OC: ObjectClient + Send + Sync> SuperblockInner<OC> {
         }
 
         Ok(inode)
+    }
+
+    /// Mark all ancestors of the given inode as LocalDirectory.
+    /// This ensures that parent directories persist even after their files are uploaded.
+    fn mark_ancestors_as_local_directory(&self, inode: &Inode) -> Result<(), InodeError> {
+        let mut current_ino = inode.parent();
+
+        while current_ino != FUSE_ROOT_INODE {
+            let ancestor = self.get(current_ino)?;
+            let mut state = ancestor.get_mut_inode_state()?;
+
+            // Early termination: if already LocalDirectory, all ancestors must be too
+            if state.write_status == WriteStatus::LocalDirectory {
+                break;
+            }
+
+            state.write_status = WriteStatus::LocalDirectory;
+            current_ino = ancestor.parent();
+        }
+
+        Ok(())
     }
 }
 
@@ -1978,17 +2064,30 @@ impl InodeMap {
 
     /// Decreases lookup count, removes if is reduced to 0 and returns inode if it has been removed
     fn decrease_lookup_count(&mut self, ino: InodeNo, n: u64) -> Result<Option<Inode>, InodeMapError> {
+        // Check if this is a LocalDirectory before modifying count
+        let is_local_directory = if let Some((inode, _)) = self.map.get(&ino) {
+            if let Ok(state) = inode.get_inode_state() {
+                state.write_status == WriteStatus::LocalDirectory
+            } else {
+                false
+            }
+        } else {
+            return Err(InodeMapError::InodeNotFound(ino));
+        };
+
         match self.map.get_mut(&ino) {
             Some((_, count)) => {
-                // Decrease lookup count
                 *count = count.saturating_sub(n);
                 trace!(ino = ino, new_lookup_count = *count, "decremented lookup count");
 
-                if *count == 0 {
+                if *count == 0 && !is_local_directory {
                     trace!(ino, "removing inode from superblock");
                     let (inode, _) = self.map.remove(&ino).unwrap();
                     Ok(Some(inode))
                 } else {
+                    if *count == 0 {
+                        trace!(ino, "not removing LocalDirectory inode from superblock");
+                    }
                     Ok(None)
                 }
             }
@@ -2684,7 +2783,7 @@ mod tests {
             .expect("lookup should succeed on local dirs");
         assert_eq!(
             superblock.get_write_status(lookedup.ino()),
-            Some(WriteStatus::LocalUnopened)
+            Some(WriteStatus::LocalDirectory)
         );
 
         let entries = collect_dir_entries(&superblock, FUSE_ROOT_INODE, true, 2).await;
@@ -3025,7 +3124,7 @@ mod tests {
                     superblock
                         .get_write_status(dir_lookedup.ino())
                         .expect("should get write status with read lock"),
-                    WriteStatus::LocalUnopened
+                    WriteStatus::LocalDirectory
                 );
 
                 parent_dir_ino = dir_lookedup.ino();
@@ -3049,10 +3148,16 @@ mod tests {
         // object to the client
         superblock.finish_writing(new_inode.ino(), None, 0).await.unwrap();
 
-        // All nested dirs disappear
+        // LocalDirectory directories persist even after upload failure
         let dirname = nested_dirs.first().unwrap();
-        let lookedup = superblock.lookup(FUSE_ROOT_INODE, dirname.as_ref()).await;
-        assert!(matches!(lookedup, Err(InodeError::FileDoesNotExist(_, _))));
+        let lookedup = superblock.lookup(FUSE_ROOT_INODE, dirname.as_ref()).await.unwrap();
+        assert_eq!(lookedup.kind(), InodeKind::Directory);
+        assert_eq!(
+            superblock
+                .get_write_status(lookedup.ino())
+                .expect("should get write status"),
+            WriteStatus::LocalDirectory
+        );
     }
 
     #[tokio::test]
