@@ -92,7 +92,7 @@ jobs:
         submodules: true
         persist-credentials: false
     - name: Set up Rust toolchain
-      uses: actions-rust-lang/setup-rust-toolchain@v1
+      uses: actions-rust-lang/setup-rust-toolchain@v2
       with:
         # setup-rust-toolchain sets "-D warnings" by default, and Rust treats any warning as compile error.
         # We need to do this currently because `mountpoint-s3-fuser` contains some warnings and it breaks the build.
@@ -156,7 +156,7 @@ jobs:
         submodules: true
         persist-credentials: false
     - name: Set up Rust toolchain
-      uses: actions-rust-lang/setup-rust-toolchain@v1
+      uses: actions-rust-lang/setup-rust-toolchain@v2
       with:
         # setup-rust-toolchain sets "-D warnings" by default, and Rust treats any warning as compile error.
         # We need to do this currently because `mountpoint-s3-fuser` contains some warnings and it breaks the build.
@@ -207,7 +207,7 @@ jobs:
           submodules: true
           persist-credentials: false
       - name: Set up Rust toolchain
-        uses: actions-rust-lang/setup-rust-toolchain@v1
+        uses: actions-rust-lang/setup-rust-toolchain@v2
         with:
           # setup-rust-toolchain sets "-D warnings" by default, and Rust treats any warning as compile error.
           # We need to do this currently because `mountpoint-s3-fuser` contains some warnings and it breaks the build.
@@ -249,7 +249,7 @@ jobs:
         ref: ${{ inputs.ref }}
         submodules: true
     - name: Set up Rust toolchain
-      uses: actions-rust-lang/setup-rust-toolchain@v1
+      uses: actions-rust-lang/setup-rust-toolchain@v2
       with:
         # setup-rust-toolchain sets "-D warnings" by default, and Rust treats any warning as compile error.
         # We need to do this currently because `mountpoint-s3-fuser` contains some warnings and it breaks the build.
@@ -300,7 +300,7 @@ jobs:
           submodules: true
           persist-credentials: false
       - name: Set up Rust toolchain
-        uses: actions-rust-lang/setup-rust-toolchain@v1
+        uses: actions-rust-lang/setup-rust-toolchain@v2
         with:
           rustflags: ""
       - name: Install operating system dependencies
